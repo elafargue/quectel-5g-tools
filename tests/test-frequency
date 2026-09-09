@@ -310,6 +310,74 @@ test("missing EARFCN formats as Unknown",
     frequency.format_frequency(nil, false) == "Unknown")
 
 print("")
+print("=== Testing coverage of what the modem can actually report ===")
+print("")
+
+-- Captured from a GL-X3000 with an RM520N-GL:
+--   AT+QNWPREFCFG="nsa_nr5g_band"  and  AT+QNWPREFCFG="lte_band"
+--
+-- This is the module telling us every band it is capable of camping on, so
+-- it is the real lower bound on what these tables must recognise -- a bound
+-- set by the hardware rather than by our reading of the spec. n75 and n76
+-- are in the list, and were absent from the table until this branch: an
+-- L-band SDL carrier would have been labelled n50 or n51, the TDD bands
+-- occupying exactly the same megahertz.
+local RM520N_NR_BANDS = {
+    1, 2, 3, 5, 7, 8, 12, 13, 14, 18, 20, 25, 26, 28, 29, 30, 38, 40, 41,
+    48, 66, 70, 71, 75, 76, 77, 78, 79,
+}
+local RM520N_LTE_BANDS = {
+    1, 2, 3, 4, 5, 7, 8, 12, 13, 14, 17, 18, 19, 20, 25, 26, 28, 29, 30, 32,
+    34, 38, 39, 40, 41, 42, 43, 46, 48, 66, 71,
+}
+
+local unknown_nr = {}
+for _, band in ipairs(RM520N_NR_BANDS) do
+    -- nil means the band appears nowhere in the table; false only means this
+    -- particular ARFCN is outside it, which is what we expect for 0.
+    if frequency.nr_band_contains(0, band) == nil then
+        unknown_nr[#unknown_nr + 1] = "n" .. band
+    end
+end
+test("every NR band the RM520N-GL supports is in the table" ..
+    (unknown_nr[1] and (": missing " .. table.concat(unknown_nr, ", ")) or ""),
+    #unknown_nr == 0)
+
+local lte_seen = {}
+for earfcn = 0, 68935 do
+    local _, band = frequency.earfcn_to_mhz(earfcn)
+    if band then lte_seen[band] = true end
+end
+local unknown_lte = {}
+for _, band in ipairs(RM520N_LTE_BANDS) do
+    if not lte_seen[band] then unknown_lte[#unknown_lte + 1] = "B" .. band end
+end
+test("every LTE band the RM520N-GL supports is in the table" ..
+    (unknown_lte[1] and (": missing " .. table.concat(unknown_lte, ", ")) or ""),
+    #unknown_lte == 0)
+
+-- The two bands that motivated the SDL work, stated outright.
+test("n75 is known (SDL twin of n50)", frequency.nr_band_contains(290000, 75))
+test("n76 is known (SDL twin of n51)", frequency.nr_band_contains(285500, 76))
+test("n75 and n50 cover the same channel",
+    frequency.nr_band_contains(290000, 50) and frequency.nr_band_contains(290000, 75))
+test("n76 and n51 cover the same channel",
+    frequency.nr_band_contains(285500, 51) and frequency.nr_band_contains(285500, 76))
+
+-- KT Korea, captured on a GL-X3000. 636672 is inside n78 and n48 both, so
+-- it is a real instance of the ambiguity the "?" marker exists for.
+test("KT n78 carrier resolves with the reported band",
+    frequency.format_frequency(636672, true, 78) == "3550.1 MHz (n78)")
+test("the same carrier without a reported band is a guess",
+    frequency.format_frequency(636672, true) == "3550.1 MHz (n78?)")
+test("636672 is genuinely also an n48 channel",
+    frequency.nr_band_contains(636672, 48) == true)
+test("KT LTE B3 anchor at earfcn 1550",
+    frequency.format_frequency(1550, false) == "1840.0 MHz (B3)")
+test("KT LTE B8 secondary at earfcn 3743",
+    frequency.format_frequency(3743, false) == "954.3 MHz (B8)")
+
+print("")
 print("=== Testing bandwidth tables (RM520N AT manual) ===")
 print("")
 

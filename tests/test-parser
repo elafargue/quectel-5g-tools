@@ -316,6 +316,102 @@ test("fractional monotonic rounded",
      utils.clock_step(1000, 500.4, 1000 + 60 + 1643, 560.4) == 1643)
 print("")
 
+-- Test 19: KT Korea (450/08), captured on a GL-X3000 roaming
+--
+-- A second operator's real output, which the Italian TIM samples in CLAUDE.md
+-- do not cover: an LTE B3 anchor with a B8 secondary and an n78 NR carrier,
+-- a roaming registration state, a six-digit cell ID, and a neighbour on PCI 0.
+-- All three views of the same two cells were captured together, so the
+-- readings cross-check each other rather than resting on one parse.
+print("Test 19: KT Korea capture (450/08, roaming)")
+
+local kt_serving = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN"\n' ..
+    '+QENG: "LTE","FDD",450,08,D2620E,91,1550,3,5,5,414,-78,-10,-48,13,4,50,-\n' ..
+    '+QENG: "NR5G-NSA",450,08,129,-103,16,-10,636672,78,12,1\n\nOK')
+
+test("KT LTE band 3", kt_serving.lte and kt_serving.lte.band == 3)
+test("KT LTE earfcn 1550", kt_serving.lte and kt_serving.lte.arfcn == 1550)
+test("KT LTE pci 91", kt_serving.lte and kt_serving.lte.pci == 91)
+test("KT LTE tac 414", kt_serving.lte and kt_serving.lte.tac == "414")
+test("KT LTE rsrp -78", kt_serving.lte and kt_serving.lte.rsrp == -78)
+test("KT LTE rsrq -10", kt_serving.lte and kt_serving.lte.rsrq == -10)
+test("KT LTE sinr 13", kt_serving.lte and kt_serving.lte.sinr == 13)
+test("KT NR5G band 78", kt_serving.nr5g and kt_serving.nr5g.band == 78)
+test("KT NR5G arfcn 636672", kt_serving.nr5g and kt_serving.nr5g.arfcn == 636672)
+test("KT NR5G pci 129", kt_serving.nr5g and kt_serving.nr5g.pci == 129)
+-- NSA order is RSRP, SINR, RSRQ -- not the RSRP, RSRQ, SINR that SA uses
+test("KT NR5G rsrp -103", kt_serving.nr5g and kt_serving.nr5g.rsrp == -103)
+test("KT NR5G sinr 16", kt_serving.nr5g and kt_serving.nr5g.sinr == 16)
+test("KT NR5G rsrq -10", kt_serving.nr5g and kt_serving.nr5g.rsrq == -10)
+
+-- Cell IDs are not zero-padded: 28-bit ECIs usually print as seven hex
+-- digits, this one arrives as six. 0xD2620E >> 8 = 0xD262.
+test("KT six-digit cell id yields an eNodeB",
+    utils.extract_enodeb(kt_serving.lte.cell_id) == 53858)
+
+local kt_ca = parser.parse_qcainfo(
+    '+QCAINFO: "PCC",1550,100,"LTE BAND 3",5,91,-78,-9,-48,5\n' ..
+    '+QCAINFO: "SCC",3743,50,"LTE BAND 8",1,91,-91,-19,-64,0,0,-,-\n' ..
+    '+QCAINFO: "SCC",636672,12,"NR5G BAND 78",129\n\nOK')
+
+test("KT PCC band 3", kt_ca.pcc and kt_ca.pcc.band == 3)
+test("KT PCC earfcn 1550", kt_ca.pcc and kt_ca.pcc.arfcn == 1550)
+-- pcell_state 5 is "registered on roaming network" per the AT manual; every
+-- other fixture here is 1, a home network.
+test("KT PCC roaming state 5", kt_ca.pcc and kt_ca.pcc.state == 5)
+test("KT has two secondary carriers", #kt_ca.scc == 2)
+
+-- 13-field LTE SCC: the trailing ul_configured,ul_band,ul_earfcn are 0,-,-
+local kt_scc_lte = kt_ca.scc[1]
+test("KT SCC B8 band 8", kt_scc_lte.band == 8)
+test("KT SCC B8 earfcn 3743", kt_scc_lte.arfcn == 3743)
+test("KT SCC B8 rsrp -91", kt_scc_lte.rsrp == -91)
+test("KT SCC B8 rssnr 0", kt_scc_lte.rssnr == 0)
+test("KT SCC B8 uplink not configured", kt_scc_lte.ul_configured == 0)
+test("KT SCC B8 ul_band absent", kt_scc_lte.ul_band == nil)
+
+local kt_scc_nr = kt_ca.scc[2]
+test("KT SCC n78 is 5g", kt_scc_nr.rat == "5g")
+test("KT SCC n78 arfcn 636672", kt_scc_nr.arfcn == 636672)
+test("KT SCC n78 pci 129", kt_scc_nr.pci == 129)
+
+-- QENG and QCAINFO report bandwidth by different encodings. They must agree,
+-- and disagreement would mean a field offset is wrong somewhere.
+local kt_status = { serving = kt_serving, ca = kt_ca }
+utils.add_frequency_info(kt_status)
+utils.backfill_from_serving(kt_status)
+test("LTE bandwidth agrees across QENG index and QCAINFO RB count",
+    kt_serving.lte.bandwidth_dl_mhz == 20 and kt_ca.pcc.bandwidth_mhz == 20)
+test("NR bandwidth index 12 is 100 MHz",
+    kt_serving.nr5g.bandwidth_mhz == 100)
+test("KT LTE earfcn 1550 is 1840.0 MHz",
+    math.abs(kt_serving.lte.frequency_mhz - 1840.0) < 0.001)
+-- 636672 sits in both n78 and n48; the reported band settles it.
+test("KT NR arfcn 636672 is 3550.08 MHz",
+    math.abs(kt_serving.nr5g.frequency_mhz - 3550.08) < 0.001)
+
+local kt_nb = parser.parse_neighbours(
+    '+QENG: "neighbourcell intra","LTE",1550,91,-9,-78,-47,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell intra","LTE",1550,120,-14,-84,-59,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",3743,0,-8,-79,-63,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",3743,91,-19,-91,-64,-,-,-,-,-\n\nOK')
+
+test("KT four neighbours parsed", #kt_nb == 4)
+test("KT intra neighbour scope", kt_nb[1].scope == "intra")
+test("KT inter neighbour scope", kt_nb[3].scope == "inter")
+-- PCI 0 is a valid identity and must survive as the number 0, not as nil or
+-- a "-" placeholder; 0 is truthy in Lua, so a nil here would be a real parse
+-- failure rather than a display artefact.
+test("KT neighbour on PCI 0 keeps its identity", kt_nb[3].pci == 0)
+test("KT neighbour PCI 0 is a number", type(kt_nb[3].pci) == "number")
+test("KT neighbour rsrp -79", kt_nb[3].rsrp == -79)
+
+local kt_op = parser.parse_qspn('+QSPN: "KT","KT","",0,"45008"\n\nOK')
+test("KT operator name", kt_op and kt_op.operator == "KT")
+test("KT mcc/mnc 45008", kt_op and kt_op.mcc_mnc == "45008")
+print("")
+
 print("=== Results ===")
 print(string.format("Passed: %d, Failed: %d", passed, failed))
 

@@ -129,6 +129,28 @@ AT+QENG="neighbourcell"
 OK
 ```
 
+### Second operator capture: KT Korea
+
+The samples above are Italian TIM. A second real capture — KT (450/08), taken
+on a GL-X3000 roaming, with an RM520N-GL — lives in `tests/test-parser` as
+Test 19. It covers what the TIM samples do not:
+
+- `pcell_state` 5, "registered on roaming network"; every other fixture is 1
+- a six-digit cell ID (`D2620E`), where 28-bit ECIs usually print as seven
+- a neighbour on **PCI 0**, which must survive as the number 0 (0 is truthy in
+  Lua, so a nil there would be a genuine parse failure, not a display quirk)
+- an n78 carrier at ARFCN 636672, which falls inside **both** n78 and n48 — a
+  real instance of the ambiguity the `?` marker exists for
+- `AT+QNWINFO`, `AT+QCAINFO` and `AT+QENG="servingcell"` captured together,
+  so the bandwidth cross-checks each other: QENG's DL index 5 and QCAINFO's
+  100 resource blocks must both come out as 20 MHz
+
+The same capture's `AT+QNWPREFCFG` band lists became the coverage test in
+`tests/test-frequency`: every one of the 28 NR and 31 LTE bands the module
+advertises must be present in the frequency tables. That is a bound set by the
+hardware rather than by our reading of the spec, and it is the test that would
+have caught n75/n76 being missing.
+
 ## SINR vs RSSNR
 
 **Important**: The `AT+QCAINFO` command reports a field that Quectel documentation calls `rssnr`, which is **NOT** the same as SINR from `AT+QENG="servingcell"`.
