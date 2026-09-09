@@ -575,6 +575,59 @@ QMI/MBIM control channel, and bearer lifecycle.
 `5g-watchdog` deliberately does *not* touch the AT bus — it uses
 `mmcli` for both detection and recovery so it's MM-aware end to end.
 
+## Does it survive a reboot?
+
+A router on a boat gets power-cycled, and the answer differs by piece.
+
+**Survives a reboot.** `/usr/bin/*`, `/usr/lib/lua/quectel/`,
+`/www/cgi-bin/quectel-status`, `/etc/config/quectel`, the `uhttpd` UCI config
+and anything under `/etc/init.d` all live on the overlay. Daemons need
+enabling once (`/etc/init.d/5g-watchdog enable`) — installing an init script
+does not start it at boot on its own.
+
+**Does not reliably survive a reboot: a symlink into `/tmp/mountd/`.** If
+`/www/cgi-bin/quectel-status` is a link to a git checkout on USB or SD rather
+than a copy, the link persists but its target does not, in two ways. The mount
+lives under `/tmp`, which is tmpfs, and is re-established at boot by
+`block-mount` — a request arriving before that finishes finds a dangling link.
+And the path itself is not stable: `disk1_part1` depends on device
+enumeration, so adding a second disk, or the same disk coming up in a
+different order, silently renames it. Copy rather than link:
+
+```bash
+cp www/cgi-bin/quectel-status /www/cgi-bin/
+chmod +x /www/cgi-bin/quectel-status
+```
+
+The same applies to running the CLI tools from the checkout: `5g-collectd`
+under collectd's exec plugin, and the CGI's `/usr/bin/5g-info`, both want the
+tools installed rather than referenced across a removable mount.
+
+**Does not survive a firmware upgrade.** `sysupgrade` keeps `/etc/config` and
+whatever `/etc/sysupgrade.conf` names — not `/usr/bin`, `/usr/lib/lua` or
+`/www`. After a firmware update the tools are gone and `/etc/config/quectel`
+remains, so the configuration outlives the thing it configures. Two options:
+
+Add the paths to `/etc/sysupgrade.conf` so they are carried across:
+
+```
+/usr/bin/5g-info
+/usr/bin/5g-monitor
+/usr/bin/5g-collectd
+/usr/bin/quectel-at
+/usr/bin/5g-lock
+/usr/lib/lua/quectel/
+/www/cgi-bin/quectel-status
+```
+
+Or build the OpenWRT package (`openwrt/quectel-5g-tools/Makefile`) and install
+the `.ipk`. It still goes at sysupgrade, but reinstalling is one command and
+the install is tracked rather than remembered.
+
+**Lives elsewhere entirely.** Telegraf, InfluxDB and Grafana run on the boat
+server, not the router, with their own service management. The AT cache in
+`/var/run/quectel-at-cache` is tmpfs and is meant to be — it is a cache.
+
 ## Prometheus Metrics
 
 Install the collectors to `/usr/lib/lua/prometheus-collectors/`
