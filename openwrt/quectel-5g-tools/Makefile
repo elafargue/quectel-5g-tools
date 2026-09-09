@@ -60,6 +60,8 @@ define Package/quectel-5g-tools/description
     - at: Simple AT command wrapper
     - 5g-lock: Band and cell locking utility
     - 5g-collectd: collectd exec plugin feeding signal metrics to RRD
+    - quectel-status: uhttpd CGI serving the full status as JSON, for
+      Telegraf and for Grafana's Infinity datasource
     - Prometheus collector for prometheus-node-exporter-lua
 endef
 
@@ -89,6 +91,11 @@ define Package/quectel-5g-tools/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/5g-lock $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/modem-debug $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/5g-collectd $(1)/usr/bin/
+
+	# Install the JSON status CGI (uhttpd serves /www/cgi-bin as root, so
+	# it reaches the AT port without the sudo the collectd exec needs)
+	$(INSTALL_DIR) $(1)/www/cgi-bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/www/cgi-bin/quectel-status $(1)/www/cgi-bin/
 
 	# Install procd init scripts
 	$(INSTALL_DIR) $(1)/etc/init.d

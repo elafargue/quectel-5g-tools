@@ -1,0 +1,28 @@
+#!/bin/sh
+# uhttpd CGI: serve the modem status as JSON
+#
+# Install to /www/cgi-bin/quectel-status. uhttpd runs CGI as root on OpenWRT,
+# so this reaches /dev/ttyUSB2 without the sudo dance collectd's exec plugin
+# needs.
+#
+# Safe to poll. Every read goes through the shared AT cache in
+# /var/run/quectel-at-cache (15s by default, `cache_ttl` in /etc/config/quectel),
+# so a dashboard refreshing every few seconds and Telegraf polling every minute
+# between them cost the modem one set of reads per TTL, not one per request.
+#
+# The IMEI is omitted: this feeds a time-series database that may be
+# replicated ashore, and no panel needs a permanent device identifier. Drop
+# --no-imei if you want it.
+
+printf 'Content-Type: application/json\r\n'
+printf 'Cache-Control: no-store\r\n'
+printf '\r\n'
+
+if ! out=$(/usr/bin/5g-info --json --no-imei 2>/dev/null); then
+    # A failed read must not answer with an empty body that parses as "no
+    # signal". Say what happened, in the same shape the caller expects.
+    printf '{"error":"cannot read modem"}\n'
+    exit 0
+fi
+
+printf '%s\n' "$out"

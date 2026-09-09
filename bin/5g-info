@@ -7,6 +7,7 @@ local quectel = require("quectel")
 local display = quectel.display
 
 local output_json = false
+local no_imei = false
 local section = "all"
 
 local function print_usage()
@@ -14,6 +15,7 @@ local function print_usage()
     print("")
     print("Options:")
     print("  --json       Output as JSON")
+    print("  --no-imei    Omit the IMEI (for endpoints feeding a database)")
     print("  --no-color   Disable colored output")
     print("  --section X  Show only section (device, network, serving, ca, neighbours)")
     print("  --help       Show this help")
@@ -26,6 +28,8 @@ while i <= #arg do
     if a == "--json" then
         output_json = true
         display.set_color(false)
+    elseif a == "--no-imei" then
+        no_imei = true
     elseif a == "--no-color" then
         display.set_color(false)
     elseif a == "--section" then
@@ -57,6 +61,10 @@ if not ok or not status then
 end
 
 if output_json then
+    -- The IMEI is a permanent device identifier, and JSON output is what gets
+    -- scraped into a database and possibly replicated off the boat. Nothing
+    -- in a dashboard needs it.
+    if no_imei then status.imei = nil end
     print(display.to_json(status))
     modem:close()
     os.exit(0)

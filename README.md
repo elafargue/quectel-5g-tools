@@ -361,6 +361,50 @@ with `5g-led-bars`, `5g-watchdog` and any interactive `5g-monitor` for the one
 AT port. It uses the same two-command `get_signal_status()` path as the
 Prometheus collector, not the six commands behind `5g-info --json`.
 
+### JSON status endpoint
+
+`/www/cgi-bin/quectel-status` serves everything `5g-info` shows, as JSON —
+operator name, serving cells, aggregated carriers and the neighbour list:
+
+```bash
+curl http://192.168.8.1/cgi-bin/quectel-status
+```
+
+uhttpd runs CGI as root on OpenWRT, so it reaches the AT port without the
+sudo that collectd's exec plugin needs. It is safe to poll: every read goes
+through the shared cache in `/var/run/quectel-at-cache` (`cache_ttl` in
+`/etc/config/quectel`, 15s by default), so a dashboard refreshing every few
+seconds and Telegraf polling every minute between them cost the modem one set
+of reads per TTL rather than one per request.
+
+The IMEI is omitted — this feeds a database that may be replicated off the
+boat, and no panel needs a permanent device identifier. A modem that has
+stopped answering returns `{"error": "cannot read modem"}` rather than an
+empty body that would parse as a cell with no signal.
+
+There is no authentication. On a boat LAN that is usually fine; put it behind
+uhttpd's basic auth if the network is shared.
+
+#### Feeding it to Telegraf
+
+[`telegraf/quectel.conf`](telegraf/quectel.conf) polls the endpoint and writes
+to InfluxDB, splitting the data across measurements — `quectel_lte`,
+`quectel_nr5g`, `quectel_carrier`, `quectel_neighbour`, `quectel_operator`.
+Identity travels as tags, so the operator name is simply a tag, which is
+exactly what collectd cannot do.
+
+This is the *snapshot* half of the pipeline. The fast numeric series come from
+`5g-collectd`, and the split is about the AT bus rather than the network:
+`5g-collectd` is two AT commands, this endpoint is six. Poll the cheap one
+often and the expensive one rarely.
+
+Neighbours get their own measurement so they can get their own retention.
+Every `(pci, arfcn)` pair is a distinct series, and on a boat under way that
+set turns over continuously — a new set every few miles. Left in a shared
+measurement, that churn grows the index without bound for data nobody queries
+beyond the last few hours. The config file carries the routing for both
+InfluxDB 1.x retention policies and 2.x buckets.
+
 ### 5g-watchdog
 
 procd daemon that detects NSA 5G NR Secondary Cell Group (SCG) drops
