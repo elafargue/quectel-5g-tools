@@ -140,7 +140,16 @@ def row(title: str, y: int, collapsed: bool = False) -> dict:
 
 
 def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
-         text_mode="value", no_value="—", decimals=None) -> dict:
+         text_mode="value", no_value="—", decimals=None,
+         string_value=False) -> dict:
+    """string_value picks up a text field rather than a number.
+
+    reduceOptions.fields defaults to "", which Grafana reads as *numeric
+    fields only*. A frame carrying one string column then has nothing to
+    reduce and the panel shows its noValue text -- so an operator name
+    renders as "no service" while the query behind it is returning "KT"
+    perfectly well. "/.*/" matches every field regardless of type.
+    """
     field: dict = {
         "custom": {},
         "mappings": [],
@@ -163,7 +172,8 @@ def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
         "targets": targets,
         "fieldConfig": {"defaults": field, "overrides": []},
         "options": {
-            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "",
+            "reduceOptions": {"calcs": ["lastNotNull"],
+                              "fields": "/.*/" if string_value else "",
                               "values": False},
             "orientation": "auto",
             "textMode": text_mode,
@@ -297,17 +307,18 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
     panels.append(stat(
         "Network", gp(0, 1, 4, 4),
         [inf(fu, "A", url, "operator", [col("operator", "Operator")])],
-        infinity(fu), text_mode="value", no_value="no service"))
+        infinity(fu), text_mode="value", no_value="no service",
+        string_value=True))
 
     panels.append(stat(
         "Mode", gp(4, 1, 3, 4),
         [inf(fu, "A", url, "serving", [col("mode", "Mode")])],
-        infinity(fu), no_value="—"))
+        infinity(fu), no_value="—", string_value=True))
 
     panels.append(stat(
         "RRC", gp(7, 1, 3, 4),
         [inf(fu, "A", url, "serving", [col("state", "State")])],
-        infinity(fu), no_value="—"))
+        infinity(fu), no_value="—", string_value=True))
 
     # The two numbers you actually steer by. Thresholds are the ones
     # 5g-monitor colours its output with, so a green here is a green there.
@@ -346,10 +357,16 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
         [inf(fu, "A", url, "ca.pcc", carrier_cols),
          inf(fu, "B", url, "ca.scc", carrier_cols)],
         infinity(fu),
-        transformations=[{"id": "merge", "options": {}}],
+        transformations=[
+            {"id": "merge", "options": {}},
+            _order("Role", "RAT", "Band", "PCI", "MHz", "BW", "RSRP", "SINR"),
+        ],
         overrides=[
-            _colour_override("RSRP", RSRP_STEPS, "dBm"),
-            _colour_override("SINR", SINR_STEPS, "dB"),
+            _width("Role", 60), _width("RAT", 55), _width("Band", 60),
+            _width("PCI", 60), _width("MHz", 80, decimals=1),
+            _width("BW", 60),
+            _colour_override("RSRP", RSRP_STEPS, "dBm", 80),
+            _colour_override("SINR", SINR_STEPS, "dB", 70),
         ]))
 
     # Neighbours: live only. Storing them is what would grow the index without
@@ -362,9 +379,17 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             col("rsrp", "RSRP", "number"), col("rsrq", "RSRQ", "number"),
         ])],
         infinity(fu),
-        transformations=[{"id": "sortBy", "options": {
-            "fields": {}, "sort": [{"field": "RSRP", "desc": True}]}}],
-        overrides=[_colour_override("RSRP", RSRP_STEPS, "dBm")]))
+        transformations=[
+            _order("RAT", "Scope", "ARFCN", "PCI", "RSRP", "RSRQ"),
+            {"id": "sortBy", "options": {
+                "fields": {}, "sort": [{"field": "RSRP", "desc": True}]}},
+        ],
+        overrides=[
+            _width("RAT", 55), _width("Scope", 70), _width("ARFCN", 80),
+            _width("PCI", 60),
+            _colour_override("RSRP", RSRP_STEPS, "dBm", 85),
+            _colour_override("RSRQ", RSRQ_STEPS, "dB", 80),
+        ]))
 
     # -- Signal history -----------------------------------------------------
     panels.append(row("Signal history", 14))
@@ -439,20 +464,32 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
     # count() over a field rather than distinct() over a tag: pci is a tag
     # here, and InfluxQL's distinct() does not operate on tags. It returns
     # nothing, silently, which is a slow way to find out.
+    #
+    # fill(none), not fill(0). $__interval is sized to the panel width and is
+    # routinely finer than the poll interval, so most buckets contain no
+    # sample at all. fill(0) draws those as "no neighbours" -- a measurement
+    # nobody took, rendered as a reading of zero, which is the same lie
+    # get_status() and 5g-collectd go to some trouble to avoid.
     panels.append(timeseries(
         "Neighbours reported", gp(12, 30, 12, 6),
         [iql(su, "A",
              'SELECT count("rsrp") FROM "quectel_neighbour" '
-             'WHERE $timeFilter GROUP BY time($__interval), "scope" fill(0)',
+             'WHERE $timeFilter GROUP BY time($__interval), "scope" '
+             'fill(none)',
              "$tag_scope")],
         influx(su), fill=30))
 
+    # count() over a field, never distinct() over a tag. `band` is a tag here,
+    # and InfluxQL's distinct() does not operate on tags -- it answers with no
+    # series at all, so the panel reads "No data" while the measurement behind
+    # it is perfectly well populated. Each carrier contributes one point per
+    # poll, so counting a field it always carries counts the carriers.
     panels.append(timeseries(
         "Aggregated carriers", gp(0, 36, 12, 6),
         [iql(iu, "A",
-             'SELECT count(distinct("band")) FROM "quectel_carrier_pcc", '
+             'SELECT count("rsrp") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
-             'GROUP BY time($__interval), "rat" fill(0)',
+             'GROUP BY time($__interval), "rat" fill(none)',
              "$tag_rat")],
         influx(iu), fill=30, min_=0))
 
@@ -473,16 +510,42 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
     return panels
 
 
-def _colour_override(field: str, thresholds, unit: str) -> dict:
-    return {
-        "matcher": {"id": "byName", "options": field},
-        "properties": [
-            {"id": "unit", "value": unit},
-            {"id": "thresholds", "value": steps(thresholds)},
-            {"id": "custom.cellOptions",
-             "value": {"type": "color-text"}},
-        ],
-    }
+def _width(field: str, px: int, decimals: int | None = None) -> dict:
+    """Pin a table column's width.
+
+    Grafana sizes table columns to their content and lets the total overflow
+    the panel, which puts the right-hand columns behind a horizontal scrollbar
+    -- and RSRP and SINR, the two worth looking at, are the rightmost. Eight
+    auto-sized columns do not fit in half a 24-unit row; eight pinned ones do.
+    """
+    props = [{"id": "custom.width", "value": px}]
+    if decimals is not None:
+        props.append({"id": "decimals", "value": decimals})
+    return {"matcher": {"id": "byName", "options": field}, "properties": props}
+
+
+def _order(*names: str) -> dict:
+    """Lay table columns out in the given order.
+
+    Without this Grafana uses whatever order the frame carries, which after a
+    merge is alphabetical -- BW, Band, MHz, PCI, RAT -- readable only by
+    accident, and it puts the identity columns after the measurements.
+    """
+    return {"id": "organize",
+            "options": {"indexByName": {n: i for i, n in enumerate(names)},
+                        "excludeByName": {}, "renameByName": {}}}
+
+
+def _colour_override(field: str, thresholds, unit: str,
+                     width: int | None = None) -> dict:
+    props = [
+        {"id": "unit", "value": unit},
+        {"id": "thresholds", "value": steps(thresholds)},
+        {"id": "custom.cellOptions", "value": {"type": "color-text"}},
+    ]
+    if width is not None:
+        props.append({"id": "custom.width", "value": width})
+    return {"matcher": {"id": "byName", "options": field}, "properties": props}
 
 
 # ---------------------------------------------------------------------------

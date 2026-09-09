@@ -89,7 +89,7 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/.*/",
           "values": false
         },
         "orientation": "auto",
@@ -162,7 +162,7 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/.*/",
           "values": false
         },
         "orientation": "auto",
@@ -235,7 +235,7 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/.*/",
           "values": false
         },
         "orientation": "auto",
@@ -749,6 +749,82 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "Role"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RAT"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 55
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Band"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PCI"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MHz"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "BW"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "RSRP"
             },
             "properties": [
@@ -785,6 +861,10 @@
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 80
               }
             ]
           },
@@ -827,6 +907,10 @@
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 70
               }
             ]
           }
@@ -848,6 +932,23 @@
         {
           "id": "merge",
           "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "Role": 0,
+              "RAT": 1,
+              "Band": 2,
+              "PCI": 3,
+              "MHz": 4,
+              "BW": 5,
+              "RSRP": 6,
+              "SINR": 7
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
         }
       ],
       "id": 9
@@ -941,6 +1042,54 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "RAT"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 55
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scope"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ARFCN"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PCI"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "RSRP"
             },
             "properties": [
@@ -977,6 +1126,56 @@
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RSRQ"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dB"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": -15
+                    },
+                    {
+                      "color": "yellow",
+                      "value": -12
+                    },
+                    {
+                      "color": "green",
+                      "value": -10
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 80
               }
             ]
           }
@@ -995,6 +1194,21 @@
         }
       },
       "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "RAT": 0,
+              "Scope": 1,
+              "ARFCN": 2,
+              "PCI": 3,
+              "RSRP": 4,
+              "RSRQ": 5
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
         {
           "id": "sortBy",
           "options": {
@@ -1576,7 +1790,7 @@
             "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(0)",
+          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
@@ -1667,7 +1881,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT count(distinct(\"band\")) FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(0)",
+          "query": "SELECT count(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat"
