@@ -1584,7 +1584,7 @@
     },
     {
       "type": "state-timeline",
-      "title": "Bands in use",
+      "title": "Carriers in use",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1602,10 +1602,10 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
+          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"role\", \"rat\", \"band\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
-          "alias": "$tag_rat $tag_band"
+          "alias": "$tag_role $tag_rat $tag_band"
         }
       ],
       "fieldConfig": {

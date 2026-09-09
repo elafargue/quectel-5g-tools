@@ -424,15 +424,28 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
              'GROUP BY time($__interval) fill(none)', "LTE")],
         influx(iu), unit="dB", thresholds=RSRQ_STEPS))
 
-    # Which bands were carrying traffic, as bands rather than as numbers on an
-    # axis. A handover reads as a change of block.
+    # What was carrying traffic, as blocks rather than as numbers on an axis:
+    # a handover reads as a change of block, and losing a carrier as a row
+    # that stops.
+    #
+    # Carriers, not bands, and grouped by role as well -- intra-band
+    # aggregation is ordinary (KT runs B3 at EARFCN 1550 and 1694 at once),
+    # and grouping on band alone gives two rows both labelled "lte 3" with
+    # nothing to tell them apart. Role has to appear in the alias too, not
+    # just in the GROUP BY: the alias replaces the series name outright, so a
+    # tag missing from it is invisible however the query grouped.
+    #
+    # Rows are every carrier seen anywhere in the window, not the ones up
+    # right now, so widening the time range adds rows for carriers long since
+    # left behind. That is the intent for a history panel -- the top row is
+    # where "right now" lives.
     panels.append(state_timeline(
-        "Bands in use", gp(12, 23, 12, 6),
+        "Carriers in use", gp(12, 23, 12, 6),
         [iql(iu, "A",
              'SELECT last("rsrp") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
-             'GROUP BY time($__interval), "rat", "band" fill(none)',
-             "$tag_rat $tag_band")],
+             'GROUP BY time($__interval), "role", "rat", "band" fill(none)',
+             "$tag_role $tag_rat $tag_band")],
         influx(iu), thresholds=RSRP_STEPS))
 
     # -- Where we were ------------------------------------------------------

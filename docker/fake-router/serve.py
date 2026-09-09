@@ -30,17 +30,22 @@ SEED = int(os.environ.get("SEED", "20815"))
 random.seed(SEED)
 
 NETWORKS = [
-    {   # KT Korea, from tests/test-parser Test 19/21
+    {   # KT Korea, the four-carrier capture from tests/test-parser Test 21.
+        # Two secondaries, and the first is intra-band non-contiguous: B3
+        # again, on a different EARFCN. Real aggregation does this, and a
+        # dashboard that groups carriers by band alone cannot tell the two
+        # apart -- which is exactly why the sim needs to reproduce it.
         "operator": "KT", "mcc": 450, "mnc": 8, "mcc_mnc": "45008",
         "lte": {"band": 3, "arfcn": 1550, "freq": 1840.0, "bw": 20},
-        "scc": {"band": 8, "arfcn": 3743, "freq": 954.3, "bw": 10},
+        "scc": [{"band": 3, "arfcn": 1694, "freq": 1854.4, "bw": 10},
+                {"band": 8, "arfcn": 3743, "freq": 954.3, "bw": 10}],
         "nr": {"band": 78, "arfcn": 636672, "freq": 3550.08, "bw": 100,
                "scs": 1},
     },
     {   # Free Mobile France, from Test 20 -- n28, FDD, 15 kHz SCS
         "operator": "Free", "mcc": 208, "mnc": 15, "mcc_mnc": "20815",
         "lte": {"band": 3, "arfcn": 1675, "freq": 1852.5, "bw": 15},
-        "scc": None,
+        "scc": [],
         "nr": {"band": 28, "arfcn": 156510, "freq": 782.55, "bw": 10,
                "scs": 0},
     },
@@ -109,11 +114,11 @@ class Radio:
 
         carriers = [dict(lte, role="pcc", rat="lte",
                          bandwidth_mhz=n["lte"]["bw"], state=5)]
-        if n["scc"]:
+        for scc in n["scc"]:
             carriers.append({
-                "arfcn": n["scc"]["arfcn"], "band": n["scc"]["band"],
-                "bandwidth_mhz": n["scc"]["bw"],
-                "frequency_mhz": n["scc"]["freq"], "pci": self.pci,
+                "arfcn": scc["arfcn"], "band": scc["band"],
+                "bandwidth_mhz": scc["bw"],
+                "frequency_mhz": scc["freq"], "pci": self.pci,
                 "rat": "lte", "role": "scc",
                 "rsrp": lte_rsrp + random.randint(-8, 8),
                 "rsrq": -16, "rssi": -50, "rssnr": 0, "state": 1,
@@ -153,8 +158,7 @@ class Radio:
         for _ in range(random.randint(2, 7)):
             out.append({
                 "arfcn": random.choice(
-                    [n["lte"]["arfcn"]]
-                    + ([n["scc"]["arfcn"]] if n["scc"] else [])),
+                    [n["lte"]["arfcn"]] + [c["arfcn"] for c in n["scc"]]),
                 "pci": random.randint(0, 503),
                 "rat": "lte",
                 "rsrp": lte_rsrp - random.randint(0, 25),
