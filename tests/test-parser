@@ -498,6 +498,54 @@ test("Free operator name", free_op and free_op.operator == "Free")
 test("Free mcc/mnc 20815", free_op and free_op.mcc_mnc == "20815")
 print("")
 
+-- Test 21: KT again, a second visit with four carriers and a one-digit TAC
+--
+-- Same operator and bands as Test 19, so it is deliberately not a second full
+-- fixture -- that would restate three dozen assertions for no signal. Only
+-- what this capture reaches that the first one does not.
+print("Test 21: KT four-carrier capture, single-digit TAC")
+
+local kt2_serving = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN"\n' ..
+    '+QENG: "LTE","FDD",450,08,165F0C,264,1550,3,5,5,E,-73,-12,-41,11,2,-50,-\n' ..
+    '+QENG: "NR5G-NSA",450,08,740,-74,6,-11,636672,78,12,1\n\nOK')
+
+-- TAC is a hex string and arrives unpadded. Every other fixture has three
+-- characters; this one has one, which a parser treating it as fixed-width
+-- would mangle and a parser coercing it to a number would turn into nil.
+test("single-digit TAC survives as a string", kt2_serving.lte.tac == "E")
+test("a one-character TAC does not disturb the fields after it",
+    kt2_serving.lte.rsrp == -73 and kt2_serving.lte.rsrq == -12
+        and kt2_serving.lte.sinr == 11)
+test("KT2 cell id 165F0C yields eNodeB 5727",
+    utils.extract_enodeb(kt2_serving.lte.cell_id) == 5727)
+test("KT2 NR pci 740", kt2_serving.nr5g.pci == 740)
+
+-- Four carriers: two 13-field LTE SCCs in one response, where Test 19 has
+-- one. Intra-band non-contiguous on B3 (1550 and 1694) plus B8 and n78.
+local kt2_ca = parser.parse_qcainfo(
+    '+QCAINFO: "PCC",1550,100,"LTE BAND 3",5,264,-78,-15,-41,2\n' ..
+    '+QCAINFO: "SCC",1694,50,"LTE BAND 3",1,264,-85,-15,-60,0,0,-,-\n' ..
+    '+QCAINFO: "SCC",3743,50,"LTE BAND 8",1,264,-72,-20,-44,0,0,-,-\n' ..
+    '+QCAINFO: "SCC",636672,12,"NR5G BAND 78",740\n\nOK')
+
+test("three secondary carriers parsed", #kt2_ca.scc == 3)
+test("KT2 SCC order is preserved",
+    kt2_ca.scc[1].arfcn == 1694 and kt2_ca.scc[2].arfcn == 3743
+        and kt2_ca.scc[3].arfcn == 636672)
+test("both LTE SCCs are on B3 and B8",
+    kt2_ca.scc[1].band == 3 and kt2_ca.scc[2].band == 8)
+test("intra-band CA on B3 keeps two distinct carriers",
+    kt2_ca.pcc.arfcn == 1550 and kt2_ca.scc[1].arfcn == 1694
+        and kt2_ca.pcc.band == kt2_ca.scc[1].band)
+test("the NR carrier is last and still recognised as 5g",
+    kt2_ca.scc[3].rat == "5g" and kt2_ca.scc[3].band == 78)
+-- Both LTE SCCs report an unconfigured uplink, so the 13-field tail parses
+-- the same way twice in one response.
+test("both LTE SCCs have no uplink configured",
+    kt2_ca.scc[1].ul_configured == 0 and kt2_ca.scc[2].ul_configured == 0)
+print("")
+
 print("=== Results ===")
 print(string.format("Passed: %d, Failed: %d", passed, failed))
 

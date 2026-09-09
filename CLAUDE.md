@@ -151,6 +151,15 @@ advertises must be present in the frequency tables. That is a bound set by the
 hardware rather than by our reading of the spec, and it is the test that would
 have caught n75/n76 being missing.
 
+A second KT visit is Test 21, deliberately not a second full fixture — same
+operator and bands, so restating three dozen assertions would add no signal.
+It carries only what the first does not: a **one-character TAC** (`E`, where
+every other fixture has three, which a parser treating it as fixed-width would
+mangle and one coercing it to a number would lose), and **four carriers** —
+intra-band non-contiguous CA on B3 plus B8 and n78, so the 13-field LTE SCC
+tail parses twice in one response. Its nine neighbour cells seeded
+`tests/test-display`.
+
 ### Third operator capture: Free Mobile France
 
 Test 20 in `tests/test-parser`, Free (208/15). This one is the proof that the
@@ -220,6 +229,15 @@ SUL bands (n80-n84, n86, n89, n95, n97-n99) are deliberately absent: they have
 no downlink, and their ranges would shadow the bands that do. Every FR1 band
 in Table 5.2-1 that *does* have a downlink is present, and the test enforces
 that, so a band the modem reports is always recognised.
+
+## Neighbour rows are chosen, not just printed
+
+`print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`
+shows the five *strongest* neighbours rather than the first five the modem
+happened to list. Truncating first would silently show the wrong cells — a
+defect no value on screen would reveal, which is why `tests/test-display`
+exists. Every fixture before the four-carrier KT capture had fewer neighbours
+than the cap, so nothing exercised the cut at all.
 
 ## A failed read is not a measurement
 

@@ -1,0 +1,145 @@
+#!/usr/bin/env lua
+-- Test script for display rendering decisions
+--
+-- Presentation logic that changes what the operator is shown, as opposed to
+-- what was measured: which neighbours make the cut when there are more than
+-- fit, and in what order. Getting this wrong does not corrupt any value, it
+-- just shows the wrong five cells -- which for a tool used to aim an antenna
+-- is a defect the numbers themselves will never reveal.
+
+-- Working tree first: without this the suite silently validates whatever
+-- version of the package happens to be installed in /usr/lib/lua on the
+-- machine running it, and local edits go untested.
+package.path = "lua/?.lua;lua/?/init.lua;/usr/lib/lua/?.lua;/usr/lib/lua/?/init.lua;" .. package.path
+
+local parser = require("quectel.parser")
+local display = require("quectel.display")
+
+display.set_color(false)
+
+local passed = 0
+local failed = 0
+
+local function test(name, condition)
+    if condition then
+        print(string.format("  [OK] %s", name))
+        passed = passed + 1
+    else
+        print(string.format("  [FAIL] %s", name))
+        failed = failed + 1
+    end
+end
+
+-- Capture what a display function prints, as a list of lines
+local function render(fn)
+    local lines = {}
+    local real_print = print
+    _G.print = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do
+            parts[#parts + 1] = tostring((select(i, ...)))
+        end
+        lines[#lines + 1] = table.concat(parts, "\t")
+    end
+    local ok, err = pcall(fn)
+    _G.print = real_print
+    if not ok then error(err) end
+    return lines
+end
+
+print("=== Testing neighbour ordering and truncation ===")
+print("")
+
+-- KT Korea (450/08) captured on a GL-X3000: nine neighbours across three
+-- EARFCNs. Every other fixture in this suite has fewer neighbours than
+-- 5g-monitor's row cap, so until this one nothing exercised the cut at all.
+local NINE = '+QENG: "neighbourcell intra","LTE",1550,390,-19,-82,-54,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell intra","LTE",1550,264,-15,-78,-44,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell intra","LTE",1550,209,-16,-80,-54,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",3743,390,-13,-65,-44,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",3743,264,-20,-72,-44,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",3743,159,-19,-71,-44,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",1694,390,-8,-77,-60,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",1694,20,-20,-90,-60,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",1694,264,-15,-85,-60,-,-,-,-,-\n\nOK'
+
+local nine = parser.parse_neighbours(NINE)
+test("nine neighbours parsed", #nine == 9)
+
+local status = { neighbours = nine }
+local capped = render(function() display.print_neighbours(status, 5) end)
+
+-- Strip the header and blank lines to leave the cell rows
+local function rows(lines)
+    local out = {}
+    for _, l in ipairs(lines) do
+        if l:match("^  %u") then out[#out + 1] = l end
+    end
+    return out
+end
+
+local shown = rows(capped)
+test("five rows shown when capped at five", #shown == 5)
+
+-- The point of sorting before cutting: the five strongest must survive, not
+-- the first five the modem happened to list. In this capture the modem's own
+-- order would have kept -82, -78, -80, -65 and -72, losing the -71 and -77
+-- cells that are stronger than two of those.
+local rsrps = {}
+for _, l in ipairs(shown) do
+    rsrps[#rsrps + 1] = tonumber(l:match("RSRP%s+(-?%d+)"))
+end
+test("the five strongest survive the cut",
+    rsrps[1] == -65 and rsrps[2] == -71 and rsrps[3] == -72
+        and rsrps[4] == -77 and rsrps[5] == -78)
+
+local descending = true
+for i = 2, #rsrps do
+    if rsrps[i] > rsrps[i - 1] then descending = false end
+end
+test("rows are ordered strongest first", descending)
+
+local more = nil
+for _, l in ipairs(capped) do
+    more = more or l:match("and (%d+) more")
+end
+test("the dropped cells are accounted for", more == "4")
+
+-- 5g-info passes nil, meaning show everything.
+local uncapped = render(function() display.print_neighbours(status, nil) end)
+test("an uncapped render shows all nine", #rows(uncapped) == 9)
+local no_more = true
+for _, l in ipairs(uncapped) do
+    if l:match("more") then no_more = false end
+end
+test("an uncapped render has no 'more' line", no_more)
+
+-- Boundary: exactly as many neighbours as rows. The loop must end without
+-- claiming there is anything further, which an off-by-one would get wrong.
+local five = { neighbours = {} }
+for i = 1, 5 do
+    five.neighbours[i] = { rat = "lte", arfcn = 1550, pci = i, rsrp = -70 - i,
+                           scope = "intra" }
+end
+local exact = render(function() display.print_neighbours(five, 5) end)
+test("five neighbours capped at five shows five", #rows(exact) == 5)
+local exact_more = false
+for _, l in ipairs(exact) do
+    if l:match("more") then exact_more = true end
+end
+test("five neighbours capped at five claims no more", not exact_more)
+
+-- A neighbour the modem reported without an RSRP still has an identity worth
+-- showing; it just cannot outrank one that has a reading.
+local mixed = { neighbours = {
+    { rat = "lte", arfcn = 1550, pci = 1, rsrp = nil, scope = "intra" },
+    { rat = "lte", arfcn = 1550, pci = 2, rsrp = -90, scope = "intra" },
+} }
+local mixed_rows = rows(render(function() display.print_neighbours(mixed, nil) end))
+test("a neighbour with no RSRP sorts last",
+    mixed_rows[1]:match("PCI%s+2") ~= nil and mixed_rows[2]:match("PCI%s+1") ~= nil)
+test("a neighbour with no RSRP is still listed", #mixed_rows == 2)
+
+print("")
+print(string.format("=== %d passed, %d failed ===", passed, failed))
+os.exit(failed > 0 and 1 or 0)
