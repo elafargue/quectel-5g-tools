@@ -404,30 +404,32 @@ populates `/var/www` at boot carry it across; or, if nothing does, add a
 `uci-defaults` script or an init script that copies it on each boot. The
 package installs to `/www`, which is persistent on stock OpenWRT.
 
-Installing the file is not enough on its own, though, and this is where GL.iNET
-firmware differs from stock OpenWRT. **Stock OpenWRT** runs uhttpd, which
-executes anything under its `cgi_prefix` and does so as root, so the endpoint
-reaches the AT port with no further work. **GL.iNET 4.x firmware runs nginx**
-for its own web UI, and nginx does not execute CGI at all — a script dropped
-into `/www/cgi-bin` there is served as a text file or not at all. Check which
-you have:
+Installing the file is not quite enough on its own. **On a GL-X3000 both
+servers run at once** — nginx serves the GL.iNET UI on port 80, and uhttpd is
+alongside it on another port. nginx does not execute CGI at all, so the port
+that answers is uhttpd's, not the one the web UI is on:
 
 ```bash
 pgrep -l 'uhttpd|nginx'
-uci show uhttpd 2>/dev/null | grep -E 'home|cgi_prefix'
-curl -s http://127.0.0.1/cgi-bin/quectel-status | head -c 80
+uci show uhttpd | grep -E 'listen_http|home|cgi_prefix'
+netstat -ltn 2>/dev/null | grep -E ':80|:81|:8080'
 ```
 
-If that last line returns JSON, you are done. If it returns the *contents* of
-the script, or a 404, nginx is serving port 80 and the endpoint needs a home
-of its own — see below.
+Then ask uhttpd's port, not nginx's:
 
-#### When nginx owns port 80
+```bash
+curl -s http://127.0.0.1:<uhttpd port>/cgi-bin/quectel-status | head -c 80
+```
 
-Two options, in order of preference:
+JSON back and you are done — point Telegraf and
+`generate_alternative.py --url` at that port. If uhttpd is not running at all
+(stock OpenWRT without it, or a build where nginx took over entirely), see
+below.
 
-**Run uhttpd alongside, on its own port.** It is a small package and leaves the
-GL.iNET UI untouched:
+#### When there is no uhttpd at all
+
+**Run one, on its own port.** It is a small package and leaves the GL.iNET UI
+untouched:
 
 ```bash
 opkg update && opkg install uhttpd
