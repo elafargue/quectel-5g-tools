@@ -85,3 +85,85 @@ Template variables:
 
 - `$router` — `label_values(ping_average_response_ms, host)` (multi).
 - `$target` — `label_values(ping_average_response_ms, url)`.
+
+
+# Alternative dashboard: InfluxQL + live snapshot
+
+`generate_alternative.py` builds a second, unrelated dashboard
+(`quectel-5g-alternative.json`, uid `quectel-5g-alternative`) for an
+InfluxDB/Telegraf/Grafana stack. It is written from scratch rather than
+re-templated: InfluxQL and PromQL share no syntax, and there is no InfluxQL
+source dashboard to clone. `generate.py` and the published dashboard 24835 are
+untouched by it.
+
+## Two datasources, because there are two questions
+
+**InfluxDB (InfluxQL)** answers *what has the signal been doing* — the history
+rows. It queries the measurements defined by
+[`telegraf/quectel.conf`](../telegraf/quectel.conf): `quectel_lte`,
+`quectel_nr5g`, `quectel_carrier`, `quectel_neighbour`.
+
+**Infinity** answers *what is it attached to right now* — the whole top row,
+read straight from the router's `/cgi-bin/quectel-status` endpoint and stored
+nowhere. The carrier and neighbour tables live here deliberately: every
+`(pci, arfcn)` pair would otherwise become a series of its own, and on a vessel
+under way that set turns over continuously. A live panel costs nothing and is
+correct the instant the page loads.
+
+Install the Infinity plugin first:
+
+```bash
+grafana-cli plugins install yesoreyeram-infinity-datasource
+```
+
+## Generate
+
+```bash
+# default: writes quectel-5g-alternative.json with ${DS_INFLUXDB} and
+# ${DS_INFINITY} placeholders, ready to import.
+python3 generate_alternative.py
+
+# point it at the router's endpoint if it is not on 192.168.8.1
+python3 generate_alternative.py --url http://10.0.0.1/cgi-bin/quectel-status
+
+# bind to explicit datasource uids (skips the import prompt)
+python3 generate_alternative.py --influxdb-uid <uid> --infinity-uid <uid>
+
+# neighbours live under their own retention policy; name it if it is not
+# called "short"
+python3 generate_alternative.py --neighbour-rp short
+```
+
+The generator validates its own output before writing — duplicate panel ids,
+panels running past column 24, targets without a `refId`, and targets pointing
+at a different datasource than their panel. Grafana answers all four with a
+blank panel and no error message.
+
+## InfluxDB 2.x with InfluxQL
+
+Querying 2.x with InfluxQL needs a DBRP mapping per retention policy, so the
+`"short"."quectel_neighbour"` in the neighbour panel resolves to the right
+bucket:
+
+```bash
+influx v1 dbrp create --db boat --rp autogen --bucket-id <boat bucket id> --default
+influx v1 dbrp create --db boat --rp short   --bucket-id <short bucket id>
+```
+
+The Grafana datasource then wants Query Language = InfluxQL, the database name
+(`boat`), and a v1-compatible auth or token.
+
+## Thresholds
+
+RSRP, RSRQ and SINR colours come from `lua/quectel/thresholds.lua`, so a green
+here means what a green means in `5g-monitor`.
+
+## What it does not query
+
+The series `5g-collectd` feeds through collectd into Telegraf. Telegraf's
+collectd parser derives measurement names from the collectd type rather than
+from anything this repository chooses, so those names depend on the local
+Telegraf config and cannot be written blind. The two sources overlap heavily
+in any case — the split between them is about the AT bus, not about coverage:
+`5g-collectd` is two AT commands and can poll often, the JSON endpoint is six
+and polls rarely.
