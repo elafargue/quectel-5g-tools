@@ -1,0 +1,183 @@
+#!/usr/bin/env lua
+-- Test script for the "a failed read is not a measurement" contract
+--
+-- get_status() assembles six AT reads. Each returns nil on failure, and a nil
+-- field is indistinguishable from a field the modem legitimately had nothing
+-- to put in -- so an unreachable modem used to render as "no signal", which
+-- for a tool used to aim an antenna is the most misleading output possible.
+-- get_signal_status() was fixed for this; these tests hold the same line for
+-- get_status() and for the display layer that 5g-info and 5g-monitor share.
+
+-- Working tree first: without this the suite silently validates whatever
+-- version of the package happens to be installed in /usr/lib/lua on the
+-- machine running it, and local edits go untested.
+package.path = "lua/?.lua;lua/?/init.lua;/usr/lib/lua/?.lua;/usr/lib/lua/?/init.lua;" .. package.path
+
+-- get_status() never touches luaposix; only the serial transport does, and
+-- these tests replace it. Stubbing keeps them runnable without the library.
+for _, mod in ipairs({"posix", "posix.unistd", "posix.fcntl", "posix.termio",
+                      "posix.sys.stat", "posix.time", "posix.signal"}) do
+    if not package.loaded[mod] then
+        package.preload[mod] = function() return {} end
+    end
+end
+
+local modem_mod = require("quectel.modem")
+local display = require("quectel.display")
+
+display.set_color(false)
+
+local passed = 0
+local failed = 0
+
+local function test(name, condition)
+    if condition then
+        print(string.format("  [OK] %s", name))
+        passed = passed + 1
+    else
+        print(string.format("  [FAIL] %s", name))
+        failed = failed + 1
+    end
+end
+
+-- Recorded responses from the samples in CLAUDE.md
+local CANNED = {
+    ["ATI"] = "Quectel\nRM520N-GL\nRevision: RM520NGLAAR03A03M4G\n\nOK",
+    ["AT+QSPN"] = '+QSPN: "I TIM","TIM","",0,"22201"\n\nOK',
+    ["AT+GSN"] = "860123456789012\n\nOK",
+    ['AT+QENG="servingcell"'] = '+QENG: "servingcell","NOCONN"\n' ..
+        '+QENG: "LTE","FDD",222,01,328261F,280,275,1,4,4,BE3,-99,-14,-66,7,4,30,-\n' ..
+        '+QENG: "NR5G-NSA",222,01,920,-96,18,-10,648768,78,10,1\n\nOK',
+    ["AT+QCAINFO"] = '+QCAINFO: "PCC",275,75,"LTE BAND 1",1,280,-99,-14,-67,-4\n' ..
+        '+QCAINFO: "SCC",648768,10,"NR5G BAND 78",920\n\nOK',
+    ['AT+QENG="neighbourcell"'] =
+        '+QENG: "neighbourcell intra","LTE",275,280,-14,-99,-67,-,-,-,-,-,-\n\nOK',
+}
+
+-- A modem whose transport answers from CANNED, except where `broken` names a
+-- command, which then fails the way a real timeout or CME error does.
+local function fake_modem(broken)
+    local self = setmetatable({}, modem_mod)
+    self.send = function(_, cmd)
+        if broken and broken[cmd] then return nil, broken[cmd] end
+        return CANNED[cmd] or "OK"
+    end
+    return self
+end
+
+-- Capture what a display function prints
+local function render(fn, status)
+    local lines = {}
+    local real_print = print
+    _G.print = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do
+            parts[#parts + 1] = tostring((select(i, ...)))
+        end
+        lines[#lines + 1] = table.concat(parts, "\t")
+    end
+    local ok, err = pcall(fn, status)
+    _G.print = real_print
+    if not ok then error(err) end
+    return table.concat(lines, "\n")
+end
+
+print("=== Testing get_status on a healthy modem ===")
+print("")
+
+local healthy = fake_modem():get_status()
+test("no errors field when every read succeeds", healthy.errors == nil)
+test("no failed field when every read succeeds", healthy.failed == nil)
+test("serving cell parsed", healthy.serving ~= nil)
+test("NR5G serving cell parsed", healthy.serving and healthy.serving.nr5g ~= nil)
+test("band comes from the modem, not a guess",
+    healthy.serving and healthy.serving.nr5g.band == 78)
+
+print("")
+print("=== Testing get_status when the modem stops answering ===")
+print("")
+
+local all_dead = {}
+for cmd in pairs(CANNED) do all_dead[cmd] = "timeout after 2s" end
+local dead = fake_modem(all_dead):get_status()
+
+test("every failed read is reported", dead.errors and #dead.errors == 6)
+test("the serving read is named as failed",
+    dead.failed and dead.failed.serving == "timeout after 2s")
+test("the CA read is named as failed",
+    dead.failed and dead.failed.ca == "timeout after 2s")
+test("the neighbours read is named as failed",
+    dead.failed and dead.failed.neighbours == "timeout after 2s")
+test("error strings name the read that failed",
+    dead.errors and dead.errors[1]:match(": timeout after 2s$") ~= nil)
+
+-- The crux: this must not read as an antenna problem.
+local out = render(display.print_serving_cell, dead)
+test("a dead modem does not render as 'no signal'",
+    out:match("no signal") == nil)
+test("a dead modem says the read failed", out:match("cannot read modem") ~= nil)
+test("a dead modem shows why", out:match("timeout after 2s") ~= nil)
+
+local ca_out = render(display.print_carrier_aggregation, dead)
+test("CA does not render as 'none' when the read failed",
+    ca_out:match("none") == nil and ca_out:match("cannot read modem") ~= nil)
+
+local nb_out = render(function(s) display.print_neighbours(s, 5) end, dead)
+test("neighbours do not render as 'none' when the read failed",
+    nb_out:match("none") == nil and nb_out:match("cannot read modem") ~= nil)
+
+print("")
+print("=== Testing that a genuine absence still reads as absence ===")
+print("")
+
+-- The read succeeded and the answer was "nothing". That is a measurement and
+-- must keep saying so, or the fix above would just invert the confusion.
+local quiet = {
+    serving = nil,
+    ca = { pcc = nil, scc = {} },
+    neighbours = {},
+}
+local quiet_out = render(display.print_serving_cell, quiet)
+test("no signal still reads as 'no signal'", quiet_out:match("no signal") ~= nil)
+test("no signal does not claim a read failure",
+    quiet_out:match("cannot read modem") == nil)
+test("no carriers still reads as 'none'",
+    render(display.print_carrier_aggregation, quiet):match("none") ~= nil)
+test("no neighbours still reads as 'none'",
+    render(function(s) display.print_neighbours(s, 5) end, quiet):match("none") ~= nil)
+
+print("")
+print("=== Testing partial failure ===")
+print("")
+
+-- One read failing must not discard the five that worked.
+local partial = fake_modem({['AT+QENG="neighbourcell"'] = "+CME ERROR: 4"}):get_status()
+test("only the failed read is reported", partial.errors and #partial.errors == 1)
+test("the failure names neighbours", partial.failed and partial.failed.neighbours ~= nil)
+test("the serving cell survives a neighbours failure", partial.serving ~= nil)
+test("the CA info survives a neighbours failure", partial.ca ~= nil)
+test("the surviving serving cell still renders normally",
+    render(display.print_serving_cell, partial):match("cannot read modem") == nil)
+test("only the neighbours section reports the failure",
+    render(function(s) display.print_neighbours(s, 5) end, partial)
+        :match("cannot read modem") ~= nil)
+
+-- A failed serving read while CA still works: the sections disagree, and each
+-- must tell the truth about its own read rather than borrowing the other's.
+local no_serving = fake_modem({['AT+QENG="servingcell"'] = "timeout after 2s"}):get_status()
+test("a failed serving read is flagged",
+    render(display.print_serving_cell, no_serving):match("cannot read modem") ~= nil)
+test("a working CA read is unaffected",
+    render(display.print_carrier_aggregation, no_serving):match("cannot read modem") == nil)
+
+print("")
+print("=== Testing that failures reach JSON consumers ===")
+print("")
+
+local json = display.to_json(dead)
+test("errors appear in JSON output", json:match('"errors"') ~= nil)
+test("the JSON names the failing read", json:match("timeout after 2s") ~= nil)
+
+print("")
+print(string.format("=== %d passed, %d failed ===", passed, failed))
+os.exit(failed > 0 and 1 or 0)

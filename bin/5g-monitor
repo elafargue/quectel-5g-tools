@@ -22,6 +22,16 @@ if beeps_enabled == nil then beeps_enabled = true end
 local running = true
 local modem = nil
 
+-- Last sample that actually came back from the modem, and when. A failed
+-- read must never blank the screen into something that reads as "no signal",
+-- so the last good values stay up -- labelled with their age, and with the
+-- beeps silenced, because stale audio is worse than no audio when the whole
+-- point is aiming an antenna by ear.
+local last_good = nil
+local last_good_at = nil
+local read_error = nil
+local partial_error = nil
+
 -- Check function for interruptible operations
 local function is_running()
     return running
@@ -55,7 +65,63 @@ local state_labels = {
     LIMSRV = "LIMITED",
 }
 
-local function draw_header(status)
+-- math.floor, not //: OpenWRT ships Lua 5.1, where // is a syntax error.
+local function age_str(seconds)
+    if seconds < 60 then
+        return string.format("%ds", seconds)
+    elseif seconds < 3600 then
+        return string.format("%dm%02ds", math.floor(seconds / 60), seconds % 60)
+    end
+    return string.format("%dh%02dm", math.floor(seconds / 3600),
+        math.floor((seconds % 3600) / 60))
+end
+
+-- All six reads failing at once concatenates into something far wider than
+-- the 78-column rule, which wraps and pushes the signal figures off screen.
+-- The first failure is the diagnostic one anyway.
+-- 48 keeps the longest prefix ("NO DATA  cannot read modem: ", 28 chars)
+-- inside the 78-column rule, and still shows the first failure in full.
+local function short_error(err)
+    if #err <= 48 then return err end
+    return err:sub(1, 45) .. "..."
+end
+
+-- Says where the numbers below came from: a live read, a read that failed, or
+-- a sample from some seconds ago that is still on screen because the modem
+-- has stopped answering. Without this line a frozen screen and a working one
+-- look identical.
+local function draw_status_line(age)
+    if not read_error then
+        if partial_error then
+            -- The serving cell and CA reads arrived, so the signal figures
+            -- are current and worth beeping at; something else did not.
+            print(string.format("%sPARTIAL%s  updated %s ago -- %s",
+                display.color(display.Colors.YELLOW), display.color(display.Colors.RESET),
+                age_str(age), short_error(partial_error)))
+        else
+            print(string.format("%sLIVE%s  updated %s ago, refreshing every %ds",
+                display.color(display.Colors.GREEN), display.color(display.Colors.RESET),
+                age_str(age), refresh_interval))
+        end
+        return
+    end
+
+    if not last_good then
+        print(string.format("%sNO DATA%s  cannot read modem: %s",
+            display.color(display.Colors.RED), display.color(display.Colors.RESET),
+            short_error(read_error)))
+        return
+    end
+
+    print(string.format("%sSTALE%s  cannot read modem: %s",
+        display.color(display.Colors.RED), display.color(display.Colors.RESET),
+        short_error(read_error)))
+    print(string.format("%s       showing the last reading, %s old -- beeps muted%s",
+        display.color(display.Colors.RED), age_str(age),
+        display.color(display.Colors.RESET)))
+end
+
+local function draw_header(status, age)
     local device_str = "?"
     if status.device then
         device_str = string.format("%s %s", status.device.model or "?", status.device.revision or "")
@@ -76,6 +142,7 @@ local function draw_header(status)
     print(string.format("%s5G Monitor%s | %s | %s | %s | %s",
         display.color(display.Colors.BOLD), display.color(display.Colors.RESET),
         device_str, network_str, state, beep_str))
+    draw_status_line(age)
     print(string.rep("-", 78))
 end
 
@@ -95,26 +162,47 @@ end
 
 local function main_loop()
     while running do
-        -- Get modem status
+        -- Get modem status. A read that failed is not a reading: it must not
+        -- reach the screen as one, and must not be beeped at.
         local ok, status = pcall(function() return modem:get_status() end)
+        read_error, partial_error = nil, nil
         if not ok then
-            status = {}
+            read_error = tostring(status)
+        elseif status.errors then
+            -- The aiming figures come from the serving cell and CA reads. If
+            -- those arrived the sample is current and usable, whatever else
+            -- failed; the affected section says so on its own line. Only
+            -- losing one of those two makes the whole sample untrustworthy.
+            if status.failed.serving or status.failed.ca then
+                read_error = table.concat(status.errors, "; ")
+            else
+                partial_error = table.concat(status.errors, "; ")
+            end
+        end
+
+        if not read_error then
+            last_good = status
+            last_good_at = os.time()
         end
         modem:close()
+
+        -- Fall back to the last thing the modem actually said, if anything.
+        local shown = (not read_error) and status or (last_good or {})
+        local age = last_good_at and (os.time() - last_good_at) or 0
 
         -- Clear screen and move cursor home, hide cursor
         io.write(display.CLEAR .. display.HOME .. display.HIDE_CURSOR)
 
-        draw_header(status)
-        display.print_serving_cell(status)
-        display.print_carrier_aggregation(status)
-        display.print_neighbours(status, 5)
+        draw_header(shown, age)
+        display.print_serving_cell(shown)
+        display.print_carrier_aggregation(shown)
+        display.print_neighbours(shown, 5)
         draw_footer()
 
         io.flush()
 
-        -- Audio feedback based on SINR
-        local sinr = display.get_sinr(status)
+        -- Audio feedback based on SINR, live samples only
+        local sinr = (not read_error) and display.get_sinr(shown) or nil
         do_beeps(sinr)
 
         -- Check if we should exit before sleeping

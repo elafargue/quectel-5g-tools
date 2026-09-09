@@ -422,19 +422,48 @@ end
 
 --- Get complete modem status
 -- Returns all information needed for monitoring/exporting
--- @return Table with device, operator, serving, ca, neighbours
+--
+-- Every read that failed is recorded in status.errors, and status.failed maps
+-- the field name to its error. This is the same fault get_signal_status()
+-- documents below: a read that never happened returns nil, and a nil field is
+-- indistinguishable from a field the modem legitimately had nothing to put
+-- in. Left unmarked, an unreachable modem renders as "no signal" -- which,
+-- for someone turning an antenna by what this screen says, is the most
+-- misleading thing the tool could tell them. Unlike get_signal_status() this
+-- does not refuse to return: 5g-info and 5g-monitor both want the reads that
+-- did work. It just refuses to let the ones that did not pass as data.
+--
+-- @return Table with device, operator, serving, ca, neighbours, and on
+--         failure errors (array of strings) and failed (field -> error)
 function M:get_status()
     local status = {}
+    local errors = {}
+    local failed = {}
 
-    status.device = self:get_device_info()
-    status.operator = self:get_operator()
-    status.imei = self:get_imei()
-    status.serving = self:get_serving_cell()
-    status.ca = self:get_ca_info()
-    status.neighbours = self:get_neighbours()
+    local function read(field, label, getter)
+        local value, err = getter(self)
+        if value == nil then
+            err = err or "no response"
+            failed[field] = err
+            errors[#errors + 1] = string.format("%s: %s", label, err)
+        end
+        return value
+    end
+
+    status.device = read("device", "device info", self.get_device_info)
+    status.operator = read("operator", "operator", self.get_operator)
+    status.imei = read("imei", "IMEI", self.get_imei)
+    status.serving = read("serving", "serving cell", self.get_serving_cell)
+    status.ca = read("ca", "carrier aggregation", self.get_ca_info)
+    status.neighbours = read("neighbours", "neighbours", self.get_neighbours)
 
     utils.add_frequency_info(status)
     utils.backfill_from_serving(status)
+
+    if #errors > 0 then
+        status.errors = errors
+        status.failed = failed
+    end
 
     return status
 end

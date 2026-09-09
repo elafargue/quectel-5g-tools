@@ -153,12 +153,50 @@ Two consequences worth remembering:
   formula, so it is exact for any ARFCN on the raster, band known or not. The
   tables only supply the band *label*.
 - **An ARFCN cannot identify the band.** n1/n65/n66, n2/n25, n5/n26, n12/n85,
-  n41/n90 and n77/n78 share spectrum. The modem always reports the band in
-  `QENG` and `QCAINFO`, so pass it to `nrarfcn_to_mhz()`/`format_frequency()`;
-  the table lookup is only the fallback when it did not.
+  n41/n90 and n77/n78 share spectrum, and the L-band is a four-way tie:
+  1427-1432 MHz is n51, n76, n91 and n93 at once; 1432-1517 MHz is n50, n75,
+  n92 and n94, with n74 overlapping from 1475. **n50/n51 are TDD and n75/n76
+  are SDL** — identical spectrum, differing only in whether an uplink shares
+  it, which a downlink channel number cannot reveal. Only the network's
+  signalling can, and that is what the modem reports.
+- **The modem's band wins, always.** `nrarfcn_to_mhz(arfcn, band)` returns a
+  reported band as given and never substitutes a guess — including for a band
+  the table has never heard of, which means the table is behind, not that the
+  modem is wrong. A band derived from the table instead comes back marked
+  `"inferred"` and prints with a `?` (`1450.0 MHz (n50?)`) so it cannot be
+  mistaken for a reading. Use `nr_band_contains()` if you need to check the
+  two against each other.
 
 SUL bands (n80-n84, n86, n89, n95, n97-n99) are deliberately absent: they have
-no downlink, and their ranges would shadow the bands that do.
+no downlink, and their ranges would shadow the bands that do. Every FR1 band
+in Table 5.2-1 that *does* have a downlink is present, and the test enforces
+that, so a band the modem reports is always recognised.
+
+## A failed read is not a measurement
+
+`get_status()` assembles six AT reads and each returns `nil` on failure. A nil
+field is indistinguishable from a field the modem legitimately had nothing to
+put in, so an unreachable modem used to render as "no signal" — the most
+misleading thing this toolkit can say to someone turning an antenna by what
+the screen tells them.
+
+`get_signal_status()` was fixed for this first (it refuses to return a partial
+sample at all, because Prometheus wants a gap, not a zero). `get_status()`
+cannot refuse — `5g-info` and `5g-monitor` both want the reads that did work —
+so it records what failed instead:
+
+- `status.errors` — array of `"<read>: <error>"` strings
+- `status.failed` — field name (`serving`, `ca`, `neighbours`, …) to its error
+
+Everything downstream keys off that. The display prints `cannot read modem`
+where it would have said "no signal" or "none"; `5g-monitor` holds the last
+good reading, labels it `STALE` with its age, and **mutes the beeps**, since
+stale audio feedback is worse than silence when someone is aiming by ear;
+`5g-info` writes the failures to stderr and `to_json` carries them through.
+
+The inverse matters just as much: a read that succeeded and returned nothing
+is a real measurement and must keep saying "no signal". `tests/test-read-
+failures` holds both directions.
 
 ## Documentation
 

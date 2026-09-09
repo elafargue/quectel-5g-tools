@@ -159,6 +159,29 @@ Real-time monitoring with ANSI TUI:
 
 Press Ctrl+C to quit.
 
+#### Knowing whether what you see is real
+
+The line under the title says where the figures come from, because a screen
+frozen on a modem that stopped answering otherwise looks exactly like a
+working one:
+
+| | |
+|---|---|
+| `LIVE  updated 2s ago` | The modem answered. The numbers are current. |
+| `STALE  cannot read modem: …` | The read failed. The last good reading stays on screen, labelled with its age, and **the beeps are muted** — pointing an antenna by stale audio is worse than pointing it by none. |
+| `NO DATA  cannot read modem: …` | The read failed and there is no earlier reading to show. |
+
+A failed read is never drawn as a measurement. Where a section would have
+said "no signal" or "none", it says `cannot read modem` and gives the reason
+— those words are claims about the network, and they are only true if we
+managed to ask. `5g-info` prints the same failures to stderr and includes
+them in `--json` output.
+
+A band printed with a question mark, like `1450.0 MHz (n50?)`, was inferred
+from the channel number rather than reported by the modem, and may name a
+different band sharing the same spectrum. See
+[Band lookup from ARFCN](CLAUDE.md#band-lookup-from-arfcn).
+
 ### Band and cell locking
 
 Configure bands in UCI:

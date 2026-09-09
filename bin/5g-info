@@ -70,6 +70,17 @@ else
     sections = {section}
 end
 
+-- Say up front which reads failed. The sections below report their own
+-- failures, but device and network quietly print "?" for missing fields, and
+-- a partial read otherwise looks like a complete one.
+if status.errors then
+    io.stderr:write("Warning: " .. #status.errors ..
+        " of 6 modem reads failed; values below are incomplete\n")
+    for _, e in ipairs(status.errors) do
+        io.stderr:write("  " .. e .. "\n")
+    end
+end
+
 for _, s in ipairs(sections) do
     if s == "device" then
         display.print_device_info(status)

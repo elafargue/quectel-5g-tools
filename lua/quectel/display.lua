@@ -92,11 +92,29 @@ function M.print_network_info(status)
         status.operator.mcc_mnc or "?"))
 end
 
+--- Describe a section whose underlying read failed, if it did
+-- "none" and "no signal" are claims about the network. They are only true if
+-- we managed to ask. When the read itself failed, say so instead -- otherwise
+-- an unreachable modem is indistinguishable from an antenna pointed at
+-- nothing, which is exactly backwards for a tool used to aim one.
+-- @param status Modem status
+-- @param field Field name in status.failed ("serving", "ca", "neighbours")
+-- @return Error string, or nil if the read succeeded
+local function read_failure(status, field)
+    return status.failed and status.failed[field]
+end
+
 --- Print serving cell section
 -- @param status Modem status
 function M.print_serving_cell(status)
     if not status.serving then
-        print("\nServing cell: no signal")
+        local err = read_failure(status, "serving")
+        if err then
+            print(string.format("\n%sServing cell: cannot read modem (%s)%s",
+                M.color(M.Colors.RED), err, M.color(M.Colors.RESET)))
+        else
+            print("\nServing cell: no signal")
+        end
         return
     end
 
@@ -155,7 +173,13 @@ end
 -- @param status Modem status
 function M.print_carrier_aggregation(status)
     if not status.ca or (not status.ca.pcc and #status.ca.scc == 0) then
-        print("\nCarrier Aggregation: none")
+        local err = read_failure(status, "ca")
+        if err then
+            print(string.format("\n%sCarrier Aggregation: cannot read modem (%s)%s",
+                M.color(M.Colors.RED), err, M.color(M.Colors.RESET)))
+        else
+            print("\nCarrier Aggregation: none")
+        end
         return
     end
 
@@ -194,7 +218,13 @@ end
 -- @param max_rows Maximum rows to display (nil for all)
 function M.print_neighbours(status, max_rows)
     if not status.neighbours or #status.neighbours == 0 then
-        print("\nNeighbour Cells: none")
+        local err = read_failure(status, "neighbours")
+        if err then
+            print(string.format("\n%sNeighbour Cells: cannot read modem (%s)%s",
+                M.color(M.Colors.RED), err, M.color(M.Colors.RESET)))
+        else
+            print("\nNeighbour Cells: none")
+        end
         return
     end
 
