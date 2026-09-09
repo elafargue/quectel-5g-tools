@@ -88,8 +88,8 @@ end
 -- @return Table with manufacturer, model, revision
 function M.parse_ati(text)
     local lines = {}
-    for line in text:gmatch("[^\r\n]+") do
-        line = line:match("^%s*(.-)%s*$")
+    for raw in text:gmatch("[^\r\n]+") do
+        local line = raw:match("^%s*(.-)%s*$")
         if line ~= "" and line ~= "OK" then
             table.insert(lines, line)
         end

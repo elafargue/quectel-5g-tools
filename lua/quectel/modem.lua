@@ -319,8 +319,8 @@ end
 function M:get_imei()
     local resp, err = self:send("AT+GSN")
     if not resp then return nil, err end
-    for line in resp:gmatch("[^\r\n]+") do
-        line = line:match("^%s*(.-)%s*$")
+    for raw in resp:gmatch("[^\r\n]+") do
+        local line = raw:match("^%s*(.-)%s*$")
         if line:match("^%d+$") then
             return line
         end
