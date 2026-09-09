@@ -55,7 +55,7 @@ local CANNED = {
 
 -- Run bin/5g-collectd once against a stubbed transport, returning the lines
 -- it printed and the status it exited with.
-local function run(err_for_every_read)
+local function run(err_for_every_read, extra_arg)
     local real_create = quectel.create_modem
     quectel.create_modem = function()
         local self = setmetatable({}, modem_mod)
@@ -81,6 +81,7 @@ local function run(err_for_every_read)
     -- something catchable rather than killing the suite.
     os.exit = function(c) code = c; error({ exit = true }, 0) end
     _G.arg = { "--once" }
+    if extra_arg then _G.arg[#_G.arg + 1] = extra_arg end
 
     local chunk = loadfile("bin/5g-collectd")
     local ok, e = pcall(chunk)
@@ -106,52 +107,122 @@ local lines, code = run(nil)
 test("exits successfully", code == 0)
 test("emits metrics", #lines > 0)
 
-local well_formed = true
+local putvals, notifs = {}, {}
 for _, l in ipairs(lines) do
+    if l:match("^PUTVAL ") then putvals[#putvals + 1] = l end
+    if l:match("^PUTNOTIF ") then notifs[#notifs + 1] = l end
+end
+test("output is only PUTVAL and PUTNOTIF lines",
+    #putvals + #notifs == #lines)
+
+local well_formed = true
+for _, l in ipairs(putvals) do
     -- PUTVAL <host>/<plugin>-<instance>/<type>-<instance> interval=N N:<value>
     if not l:match("^PUTVAL %S+/%S+/%S+ interval=%d+ N:%-?%d+%.?%d*$") then
         well_formed = false
     end
 end
-test("every line matches the PUTVAL grammar", well_formed)
+test("every value line matches the PUTVAL grammar", well_formed)
 
 test("LTE RSRP is reported",
-    find(lines, "quectel_lte/gauge%-rsrp .* N:(-?%d+)") == "-73")
+    find(putvals, "quectel_lte/gauge%-rsrp .* N:(-?%d+)") == "-73")
 -- RSRQ is always negative. collectd's stock signal_quality type is 0:U, so
 -- this value would be rejected as out of range under it; gauge is U:U.
 test("negative RSRQ survives",
-    find(lines, "quectel_lte/gauge%-rsrq .* N:(-?%d+)") == "-12")
+    find(putvals, "quectel_lte/gauge%-rsrq .* N:(-?%d+)") == "-12")
 test("NR RSRP is reported",
-    find(lines, "quectel_nr5g/gauge%-rsrp .* N:(-?%d+)") == "-74")
+    find(putvals, "quectel_nr5g/gauge%-rsrp .* N:(-?%d+)") == "-74")
 test("NR band is reported",
-    find(lines, "quectel_nr5g/gauge%-band .* N:(%d+)") == "78")
+    find(putvals, "quectel_nr5g/gauge%-band .* N:(%d+)") == "78")
 test("NR attachment is reported as 1",
-    find(lines, "quectel_radio/gauge%-nr_attached .* N:(%d+)") == "1")
+    find(putvals, "quectel_radio/gauge%-nr_attached .* N:(%d+)") == "1")
 test("all four carriers are counted",
-    find(lines, "quectel_radio/gauge%-carriers .* N:(%d+)") == "4")
+    find(putvals, "quectel_radio/gauge%-carriers .* N:(%d+)") == "4")
 
 -- Carriers are addressed by slot, never by band: a band in the path would
 -- mint a new RRD file at every handover.
 test("carriers are addressed by slot, not band",
-    find(lines, "(quectel_scc0)/") == "quectel_scc0"
-        and find(lines, "(quectel_scc1)/") == "quectel_scc1")
+    find(putvals, "(quectel_scc0)/") == "quectel_scc0"
+        and find(putvals, "(quectel_scc1)/") == "quectel_scc1")
 local band_in_path = false
-for _, l in ipairs(lines) do
+for _, l in ipairs(putvals) do
     if l:match("quectel_[ns]%w*_?b%d") or l:match("quectel_n78") then
         band_in_path = true
     end
 end
 test("no band number appears in a metric path", not band_in_path)
 test("the NR secondary carrier lands in a slot",
-    find(lines, "quectel_scc2/gauge%-band .* N:(%d+)") == "78")
+    find(putvals, "quectel_scc2/gauge%-band .* N:(%d+)") == "78")
 
 -- The interval reaches collectd, or it assumes its own default and marks
 -- values stale at the wrong time.
 local all_interval = true
-for _, l in ipairs(lines) do
+for _, l in ipairs(putvals) do
     if not l:match("interval=%d+") then all_interval = false end
 end
 test("every line carries an interval", all_interval)
+
+print("")
+print("=== Testing numeric identity ===")
+print("")
+
+-- collectd has no string metric, so the carrier's identity travels as its
+-- PLMN. mcc * 1000 + mnc, which survives a three-digit MNC: 450/08 is KT at
+-- 450008 and 310/260 is T-Mobile US at 310260, where the conventional
+-- concatenation cannot tell "45008" and "310260" apart without knowing the
+-- MNC width beforehand.
+test("PLMN identifies KT numerically",
+    find(putvals, "quectel_radio/gauge%-plmn .* N:(%d+)") == "450008")
+-- cell_id 165F0C: the low byte is the sector, the rest the site.
+test("eNodeB is derived from the cell id",
+    find(putvals, "quectel_lte/gauge%-enodeb .* N:(%d+)") == "5727")
+-- TAC arrives as hex; this capture's is the single digit E.
+test("TAC is converted from hex",
+    find(putvals, "quectel_lte/gauge%-tac .* N:(%d+)") == "14")
+
+print("")
+print("=== Testing change notifications ===")
+print("")
+
+test("the first sample announces the state it found", #notifs >= 3)
+
+local notif_ok = true
+for _, l in ipairs(notifs) do
+    -- severity, time and host are required, and message must come last
+    -- because it runs to end of line.
+    if not l:match("^PUTNOTIF severity=%a+ time=%d+ host=%S+ .* message=%S") then
+        notif_ok = false
+    end
+    if l:match("message=.*[\r\n]") then notif_ok = false end
+end
+test("every notification matches the PUTNOTIF grammar", notif_ok)
+
+local sev_ok = true
+for _, l in ipairs(notifs) do
+    local sev = l:match("severity=(%a+)")
+    if sev ~= "okay" and sev ~= "warning" and sev ~= "failure" then
+        sev_ok = false
+    end
+end
+test("severities are ones collectd accepts", sev_ok)
+
+test("the operator is announced",
+    find(notifs, "message=(PLMN 450008)") == "PLMN 450008")
+test("the NR band is announced",
+    find(notifs, "message=(NR carrier on n78)") == "NR carrier on n78")
+
+local _, _ = run(nil, "--no-notify")
+local quiet_lines = run(nil, "--no-notify")
+local quiet_notifs = 0
+for _, l in ipairs(quiet_lines) do
+    if l:match("^PUTNOTIF") then quiet_notifs = quiet_notifs + 1 end
+end
+test("--no-notify suppresses every notification", quiet_notifs == 0)
+local quiet_putvals = 0
+for _, l in ipairs(quiet_lines) do
+    if l:match("^PUTVAL") then quiet_putvals = quiet_putvals + 1 end
+end
+test("--no-notify leaves the values alone", quiet_putvals == #putvals)
 
 print("")
 print("=== Testing collectd output when the modem does not answer ===")
@@ -173,11 +244,103 @@ print("")
 -- backfill only fills SINR for a carrier matching the serving cell. That
 -- absence must stay absent rather than arriving as a zero, which would read
 -- as a terrible but real signal-to-noise ratio.
-local scc0_sinr = find(lines, "quectel_scc0/gauge%-(sinr)")
+local scc0_sinr = find(putvals, "quectel_scc0/gauge%-(sinr)")
 test("an LTE secondary carrier reports no SINR rather than zero",
     scc0_sinr == nil)
 test("the same carrier does report its RSRP",
-    find(lines, "quectel_scc0/gauge%-rsrp .* N:(-?%d+)") == "-85")
+    find(putvals, "quectel_scc0/gauge%-rsrp .* N:(-?%d+)") == "-85")
+
+print("")
+print("=== Testing that notifications fire on the edge, not every sample ===")
+print("")
+
+-- The --once harness above starts each run with no history, so it can only
+-- ever see a first sample. This drives several samples inside one process by
+-- standing in for sleep, which is where the loop yields.
+local utils = require("quectel.utils")
+
+local function run_samples(states)
+    local step = 0
+    local real_create = quectel.create_modem
+    local real_sleep = utils.sleep
+    quectel.create_modem = function()
+        local self = setmetatable({}, modem_mod)
+        self.send = function(_, cmd)
+            return (states[step + 1] or states[#states])[cmd] or "OK"
+        end
+        self.close = function() end
+        return self
+    end
+
+    local samples = {}
+    local lines
+    local real_print, real_exit, real_arg = print, os.exit, arg
+    _G.print = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do
+            parts[#parts + 1] = tostring((select(i, ...)))
+        end
+        lines[#lines + 1] = table.concat(parts, "\t")
+    end
+    os.exit = function() end
+    _G.arg = {}
+    lines = {}
+
+    utils.sleep = function()
+        samples[#samples + 1] = lines
+        lines = {}
+        step = step + 1
+        if step >= #states then error({ stop = true }, 0) end
+    end
+
+    local ok, e = pcall(loadfile("bin/5g-collectd"))
+
+    _G.print, os.exit, _G.arg = real_print, real_exit, real_arg
+    quectel.create_modem, utils.sleep = real_create, real_sleep
+    if not ok and type(e) ~= "table" then error(e) end
+    return samples
+end
+
+local NO_NR = {
+    ['AT+QENG="servingcell"'] = '+QENG: "servingcell","NOCONN","LTE","FDD",' ..
+        '450,08,165F0C,264,1550,3,5,5,E,-93,-11,-61,11,7,50,-\n\nOK',
+    ["AT+QCAINFO"] = '+QCAINFO: "PCC",1550,100,"LTE BAND 3",5,264,-93,-15,-41,2\n\nOK',
+}
+
+local samples = run_samples({ CANNED, CANNED, NO_NR })
+
+local function notifs_of(sample_lines)
+    local out = {}
+    for _, l in ipairs(sample_lines) do
+        if l:match("^PUTNOTIF") then out[#out + 1] = l end
+    end
+    return out
+end
+
+test("the first sample announces what it found", #notifs_of(samples[1]) >= 3)
+-- The whole point. An unchanged radio produces values and nothing else; a
+-- notification every interval would be a log, not a signal.
+test("an unchanged second sample says nothing", #notifs_of(samples[2]) == 0)
+test("the unchanged sample still reports its values", #samples[2] > 0)
+
+-- Losing the NR leg while the LTE anchor stays up is the failure 5g-watchdog
+-- exists for, and the one every LTE metric stays healthy through.
+local dropped = notifs_of(samples[3])
+test("losing the NR leg is announced", #dropped >= 1)
+local drop_line
+for _, l in ipairs(dropped) do
+    if l:match("NR leg dropped") then drop_line = l end
+end
+test("the NR drop names the band it lost",
+    drop_line ~= nil and drop_line:match("was n78") ~= nil)
+test("the NR drop is a failure, not an okay",
+    drop_line ~= nil and drop_line:match("severity=(%a+)") == "failure")
+-- and the numeric series has to agree with the notification
+local nr_attached
+for _, l in ipairs(samples[3]) do
+    nr_attached = nr_attached or l:match("gauge%-nr_attached .* N:(%d+)")
+end
+test("nr_attached drops to 0 in the same sample", nr_attached == "0")
 
 print("")
 print(string.format("=== %d passed, %d failed ===", passed, failed))

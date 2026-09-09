@@ -296,9 +296,47 @@ PUTVAL router/exec-quectel_scc1/gauge-band interval=30 N:8
 
 | | |
 |---|---|
-| `quectel_lte`, `quectel_nr5g` | serving cells: `rsrp`, `rsrq`, `rssi`, `sinr`, `band`, `pci`, `earfcn`/`arfcn`, `frequency_mhz`, bandwidth |
+| `quectel_lte`, `quectel_nr5g` | serving cells: `rsrp`, `rsrq`, `rssi`, `sinr`, `band`, `pci`, `earfcn`/`arfcn`, `frequency_mhz`, bandwidth. LTE also carries `enodeb` and `tac` |
 | `quectel_pcc`, `quectel_scc0`… | one plugin instance per aggregated carrier |
-| `quectel_radio` | `nr_attached` (0/1) and `carriers` (how many are aggregated) |
+| `quectel_radio` | `nr_attached` (0/1), `carriers`, and `plmn` |
+
+#### Names, and why they are numbers
+
+collectd has no string metric — `PUTVAL` carries a number and nothing else —
+so there is no way to publish "KT" as a value. Most of what you would want a
+name for is not really textual, though:
+
+- **Frequencies are already published.** `frequency_mhz` per carrier, derived
+  from the ARFCN: `1840`, `954.3`, `3550.08`.
+- **The carrier is a number.** `plmn` is `mcc * 1000 + mnc` — 450008 for KT,
+  208015 for Free, 222001 for TIM. That encoding stays unambiguous when the
+  MNC has three digits (T-Mobile US is 310260), where the conventional
+  concatenation cannot distinguish `45008` from `310260` without knowing the
+  MNC width in advance. Map it to a name in the dashboard, which is where
+  names belong.
+- **The cell is a number.** `enodeb` is the cell ID minus its sector byte, so
+  it changes on a move between sites but not between sectors of one.
+
+For state that really is textual and changes rarely, collectd's mechanism is
+a **notification**, which is an event rather than a series. `5g-collectd`
+emits one whenever the operator, either band, or the serving site changes:
+
+```
+PUTNOTIF severity=okay time=... plugin_instance=quectel_nr5g ... message=NR carrier on n78
+PUTNOTIF severity=failure time=... plugin_instance=quectel_nr5g ... message=NR leg dropped, was n78
+PUTNOTIF severity=okay time=... plugin_instance=quectel_lte ... message=eNodeB 53858, was 5727
+```
+
+They fire on the edge, never every interval — an unchanged radio emits values
+and nothing else. Route them with any notification plugin (`LoadPlugin
+notify_email`, `logfile`, or an `exec` target); with nothing configured to
+receive them they are accepted and dropped, which costs nothing. `--no-notify`
+turns them off.
+
+The NR one is the reason this exists. An NSA anchor that loses its NR leg
+stays healthy on every LTE metric, so the drop is invisible in the numbers
+until somebody notices the throughput — it arrives here as a `failure` the
+moment it happens.
 
 `nr_attached` is the series worth alerting on. An NSA anchor that loses its NR
 leg still looks healthy on every LTE metric — that failure is what `5g-watchdog`

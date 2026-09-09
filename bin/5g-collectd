@@ -38,20 +38,26 @@ if interval < MIN_INTERVAL then interval = MIN_INTERVAL end
 
 local running = true
 local once = false
+local notify = true
 
 for i = 1, #arg do
     local a = arg[i]
     if a == "--once" then
         once = true
+    elseif a == "--no-notify" then
+        notify = false
     elseif a == "--interval" then
         interval = tonumber(arg[i + 1]) or interval
         if interval < MIN_INTERVAL then interval = MIN_INTERVAL end
     elseif a == "--help" or a == "-h" then
-        print("Usage: 5g-collectd [--interval N] [--once]")
+        print("Usage: 5g-collectd [--interval N] [--once] [--no-notify]")
         print("")
         print("Prints collectd PUTVAL lines for Quectel modem signal metrics.")
         print("Intended for collectd's exec plugin; --once prints one sample")
         print("and exits, which is how to check the output by hand.")
+        print("")
+        print("--no-notify suppresses the PUTNOTIF lines sent when the")
+        print("operator, band or NR attachment changes.")
         print("")
         print("Reads COLLECTD_HOSTNAME and COLLECTD_INTERVAL from the")
         print("environment, as the exec plugin sets them.")
@@ -85,6 +91,41 @@ local function putval(plugin_instance, type_instance, value)
         hostname, plugin_instance, type_instance, interval, tostring(value)))
 end
 
+-- collectd has no string metric: PUTVAL carries a number and nothing else.
+-- Text belongs in a notification, which is an event rather than a series and
+-- so is the right shape for state that changes twice a day. These are emitted
+-- only on change; one every interval would be a log, not a signal.
+--
+-- Notifications land wherever the collectd config routes them (logfile,
+-- network, an exec target). With nothing configured to receive them they are
+-- accepted and dropped, which costs nothing.
+local function putnotif(severity, plugin_instance, type_instance, message)
+    print(string.format(
+        "PUTNOTIF severity=%s time=%d host=%s plugin=exec " ..
+        "plugin_instance=quectel_%s type=gauge type_instance=%s message=%s",
+        severity, os.time(), hostname, plugin_instance, type_instance,
+        message))
+end
+
+-- The PLMN is the carrier's identity and it is already a number, so it needs
+-- no string: 450/08 is KT, 208/15 Free, 222/01 TIM. Encoded as
+-- mcc * 1000 + mnc, which stays unambiguous when the MNC has three digits --
+-- 310/260 becomes 310260, where the conventional concatenation "310260" and
+-- "45008" cannot be told apart without knowing the MNC width in advance.
+-- Map it to a name in the dashboard; that is where names belong.
+local function plmn_of(cell)
+    if not cell or not cell.mcc or not cell.mnc then return nil end
+    return cell.mcc * 1000 + cell.mnc
+end
+
+-- TAC and cell ID arrive as hex strings. The eNodeB number is the useful part
+-- of the cell ID -- it changes on a real handover, where the sector byte
+-- alone changes on a sector switch within one site.
+local function hex_of(str)
+    if not str then return nil end
+    return tonumber(str, 16)
+end
+
 -- Carriers are addressed by role and slot -- pcc, scc0, scc1 -- and never by
 -- band. Band is a property of the carrier, not its identity: putting it in
 -- the path would mint a new RRD file at every handover, scatter one signal
@@ -104,6 +145,64 @@ local function emit_carrier(slot, c)
 end
 
 local modem = quectel.create_modem()
+
+-- What the last sample looked like, so a notification fires on the edge
+-- rather than every interval.
+local last = {}
+
+-- Reports the transitions worth a sentence: who we are attached to, on what,
+-- and whether the NR leg is up. Everything here is derivable from the numeric
+-- series, but only by staring at them -- the point of a notification is that
+-- it says so in words, at the moment it happens.
+local function notify_changes(serving, plmn)
+    if not notify then return end
+
+    if plmn and plmn ~= last.plmn then
+        putnotif(last.plmn and "warning" or "okay", "radio", "plmn",
+            string.format("PLMN %d (MCC %d MNC %02d)%s",
+                plmn, math.floor(plmn / 1000), plmn % 1000,
+                last.plmn and string.format(", was %d", last.plmn) or ""))
+        last.plmn = plmn
+    end
+
+    local lte_band = serving.lte and serving.lte.band
+    if lte_band ~= last.lte_band then
+        if lte_band then
+            putnotif("okay", "lte", "band",
+                string.format("LTE anchor on B%d%s", lte_band,
+                    last.lte_band and string.format(", was B%d", last.lte_band) or ""))
+        else
+            putnotif("failure", "lte", "band", "LTE anchor lost")
+        end
+        last.lte_band = lte_band
+    end
+
+    local nr_band = serving.nr5g and serving.nr5g.band
+    if nr_band ~= last.nr_band then
+        if nr_band then
+            putnotif("okay", "nr5g", "band",
+                string.format("NR carrier on n%d%s", nr_band,
+                    last.nr_band and string.format(", was n%d", last.nr_band) or ""))
+        else
+            -- The failure 5g-watchdog exists for. Every LTE metric stays
+            -- healthy through it, so without this line it is invisible until
+            -- somebody notices the throughput.
+            putnotif("failure", "nr5g", "band",
+                string.format("NR leg dropped, was n%d", last.nr_band))
+        end
+        last.nr_band = nr_band
+    end
+
+    -- A handover between sites, as opposed to between sectors of one site.
+    local enodeb = serving.lte and serving.lte.cell_id
+        and math.floor(hex_of(serving.lte.cell_id) / 256) or nil
+    if enodeb and enodeb ~= last.enodeb then
+        putnotif("okay", "lte", "enodeb",
+            string.format("eNodeB %d%s", enodeb,
+                last.enodeb and string.format(", was %d", last.enodeb) or ""))
+        last.enodeb = enodeb
+    end
+end
 
 local function sample()
     -- get_signal_status() returns nil rather than a half-filled table when
@@ -132,6 +231,9 @@ local function sample()
         putval("lte", "frequency_mhz", lte.frequency_mhz)
         putval("lte", "bandwidth_dl_mhz", lte.bandwidth_dl_mhz)
         putval("lte", "bandwidth_ul_mhz", lte.bandwidth_ul_mhz)
+        putval("lte", "enodeb", hex_of(lte.cell_id) and
+            math.floor(hex_of(lte.cell_id) / 256) or nil)
+        putval("lte", "tac", hex_of(lte.tac))
     end
 
     if serving.nr5g then
@@ -150,6 +252,7 @@ local function sample()
     -- 5G router: an NSA anchor that quietly loses its NR leg looks fine on
     -- every LTE metric. 5g-watchdog exists for exactly that failure.
     putval("radio", "nr_attached", serving.nr5g and 1 or 0)
+    putval("radio", "plmn", plmn_of(serving.lte) or plmn_of(serving.nr5g))
 
     if status.ca then
         local carriers = 0
@@ -163,6 +266,8 @@ local function sample()
         end
         putval("radio", "carriers", carriers)
     end
+
+    notify_changes(serving, plmn_of(serving.lte) or plmn_of(serving.nr5g))
 
     return true
 end
