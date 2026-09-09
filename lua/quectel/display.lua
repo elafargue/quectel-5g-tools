@@ -52,17 +52,30 @@ end
 -- @param value Signal value (number or nil)
 -- @param quality Quality level (from thresholds)
 -- @param show_label If true, show quality label in parentheses
+-- @param width Optional column width to right-align the value in
 -- @return Formatted string
-function M.format_signal(value, quality, show_label)
-    if not value then return "-" end
+--
+-- The padding is applied to the number, never to the returned string: the
+-- colour escapes around it are bytes with no width on screen, so a "%4s" in
+-- the caller would pad against those instead and the columns would jitter by
+-- the length of a colour code. Which is why the callers that needed columns
+-- were left unpadded, and drifted whenever a value gained a digit or a
+-- reading came back "-".
+function M.format_signal(value, quality, show_label, width)
+    local text = value and string.format("%d", value) or "-"
+    if width then
+        text = string.format("%" .. width .. "s", text)
+    end
+
+    if not value then return text end
 
     local col = M.color(M.quality_color(quality))
     local reset = M.color(M.Colors.RESET)
 
     if show_label and quality and quality ~= "" then
-        return string.format("%s%d%s (%s)", col, value, reset, quality)
+        return string.format("%s%s%s (%s)", col, text, reset, quality)
     else
-        return string.format("%s%d%s", col, value, reset)
+        return string.format("%s%s%s", col, text, reset)
     end
 end
 
@@ -132,9 +145,9 @@ function M.print_serving_cell(status)
             lte.duplex or "?", enodeb, lte.pci or "?", lte.tac or "?"))
 
         print(string.format("  RSRP: %s dBm | RSRQ: %s dB | SINR: %s dB",
-            M.format_signal(lte.rsrp, rsrp_q),
-            M.format_signal(lte.rsrq, rsrq_q),
-            M.format_signal(lte.sinr, sinr_q)))
+            M.format_signal(lte.rsrp, rsrp_q, nil, 4),
+            M.format_signal(lte.rsrq, rsrq_q, nil, 3),
+            M.format_signal(lte.sinr, sinr_q, nil, 3)))
 
         local freq_str = frequency.format_frequency(lte.arfcn, false)
         local dl_bw = frequency.format_bandwidth(lte.bandwidth_dl_mhz)
@@ -154,9 +167,9 @@ function M.print_serving_cell(status)
             nr.pci or "?"))
 
         print(string.format("  RSRP: %s dBm | RSRQ: %s dB | SINR: %s dB",
-            M.format_signal(nr.rsrp, rsrp_q),
-            M.format_signal(nr.rsrq, rsrq_q),
-            M.format_signal(nr.sinr, sinr_q)))
+            M.format_signal(nr.rsrp, rsrp_q, nil, 4),
+            M.format_signal(nr.rsrq, rsrq_q, nil, 3),
+            M.format_signal(nr.sinr, sinr_q, nil, 3)))
 
         local freq_str = frequency.format_frequency(nr.arfcn, true, nr.band)
         local bw = frequency.format_bandwidth(nr.bandwidth_mhz)
@@ -196,11 +209,11 @@ function M.print_carrier_aggregation(status)
         local bw = frequency.format_bandwidth(carrier.bandwidth_mhz)
         local freq_str = frequency.format_frequency(carrier.arfcn, is_nr, carrier.band)
         local arfcn_label = is_nr and "ARFCN" or "EARFCN"
-        print(string.format("  %s%-3s%s %-8s | PCI %3s | RSRP %s | SINR %s | %7s | %s | %s: %s",
+        print(string.format("  %s%-3s%s %-8s | PCI %3s | RSRP %s | SINR %s | %7s | %-18s | %s: %s",
             M.color(col), carrier.role:upper(), M.color(M.Colors.RESET),
             band_name, carrier.pci or "-",
-            M.format_signal(carrier.rsrp, rsrp_q),
-            M.format_signal(carrier.sinr, sinr_q),
+            M.format_signal(carrier.rsrp, rsrp_q, nil, 4),
+            M.format_signal(carrier.sinr, sinr_q, nil, 3),
             bw, freq_str, arfcn_label, carrier.arfcn or "?"))
     end
 
@@ -253,7 +266,7 @@ function M.print_neighbours(status, max_rows)
 
         print(string.format("  %-3s %-18s | EARFCN: %s | PCI %3s | RSRP %s | (%s)",
             nb.rat:upper(), freq_str, nb.arfcn or "?", nb.pci or "-",
-            M.format_signal(nb.rsrp, rsrp_q),
+            M.format_signal(nb.rsrp, rsrp_q, nil, 4),
             nb.scope or "?"))
 
         count = count + 1
