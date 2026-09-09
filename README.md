@@ -381,28 +381,10 @@ default), so a dashboard refreshing every few seconds and Telegraf polling
 every minute between them cost the modem one set of reads per TTL rather than
 one per request.
 
-#### Where the CGI directory is, and whether it survives a reboot
+#### Installing it, and finding the port that answers
 
-The path varies by firmware. Stock OpenWRT serves `/www`; some GL.iNET builds
-serve `/var/www`. Find the one your box actually uses:
-
-```bash
-uci -q get uhttpd.main.home; ls -d /www/cgi-bin /var/www/cgi-bin 2>/dev/null
-```
-
-**If it is `/var/www`, check whether it is volatile before relying on it.** On
-OpenWRT `/var` is a symlink to `/tmp`, which is tmpfs — anything copied there
-is gone at the next reboot, and the endpoint simply stops existing with
-nothing to say why:
-
-```bash
-ls -ld /var                     # "/var -> /tmp" means volatile
-```
-
-If it is volatile, install to the persistent root as well and let whatever
-populates `/var/www` at boot carry it across; or, if nothing does, add a
-`uci-defaults` script or an init script that copies it on each boot. The
-package installs to `/www`, which is persistent on stock OpenWRT.
+The file goes in `/www/cgi-bin/` — the package puts it there, and a manual
+install needs the three lines in [Manual install](#manual-install) above.
 
 Installing the file is not quite enough on its own. **On a GL-X3000 both
 servers run at once** — nginx serves the GL.iNET UI on port 80, and uhttpd is
