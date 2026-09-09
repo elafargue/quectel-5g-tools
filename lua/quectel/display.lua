@@ -118,7 +118,7 @@ function M.print_serving_cell(status)
             M.format_signal(lte.rsrq, rsrq_q),
             M.format_signal(lte.sinr, sinr_q)))
 
-        local freq_str = frequency.format_frequency(lte.arfcn or 0, false)
+        local freq_str = frequency.format_frequency(lte.arfcn, false)
         local dl_bw = frequency.format_bandwidth(lte.bandwidth_dl_mhz)
         local ul_bw = frequency.format_bandwidth(lte.bandwidth_ul_mhz)
         print(string.format("  Freq: %s | EARFCN: %s | BW: DL %s / UL %s",
@@ -140,7 +140,7 @@ function M.print_serving_cell(status)
             M.format_signal(nr.rsrq, rsrq_q),
             M.format_signal(nr.sinr, sinr_q)))
 
-        local freq_str = frequency.format_frequency(nr.arfcn or 0, true)
+        local freq_str = frequency.format_frequency(nr.arfcn, true, nr.band)
         local bw = frequency.format_bandwidth(nr.bandwidth_mhz)
         print(string.format("  Freq: %s | ARFCN: %s | BW: %s",
             freq_str, nr.arfcn or "?", bw))
@@ -170,7 +170,7 @@ function M.print_carrier_aggregation(status)
         local col = carrier.role == "pcc" and M.Colors.BLUE or M.Colors.CYAN
 
         local bw = frequency.format_bandwidth(carrier.bandwidth_mhz)
-        local freq_str = frequency.format_frequency(carrier.arfcn or 0, is_nr)
+        local freq_str = frequency.format_frequency(carrier.arfcn, is_nr, carrier.band)
         local arfcn_label = is_nr and "ARFCN" or "EARFCN"
         print(string.format("  %s%-3s%s %-8s | PCI %3s | RSRP %s | SINR %s | %7s | %s | %s: %s",
             M.color(col), carrier.role:upper(), M.color(M.Colors.RESET),
@@ -219,7 +219,7 @@ function M.print_neighbours(status, max_rows)
         end
 
         local rsrp_q = thresholds.rsrp_quality(nb.rsrp)
-        local freq_str = frequency.format_frequency(nb.arfcn or 0, false)
+        local freq_str = frequency.format_frequency(nb.arfcn, false)
 
         print(string.format("  %-3s %-18s | EARFCN: %s | PCI %3s | RSRP %s | (%s)",
             nb.rat:upper(), freq_str, nb.arfcn or "?", nb.pci or "-",

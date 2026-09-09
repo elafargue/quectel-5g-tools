@@ -138,6 +138,28 @@ OK
 
 The parser stores QCAINFO's last numeric field as `rssnr`, and the backfill logic in `modem.lua` populates the `sinr` field from the matching serving cell data. This ensures displayed SINR values are accurate.
 
+## Band lookup from ARFCN
+
+The tables in `lua/quectel/frequency.lua` hold **downlink** ranges only, from
+3GPP TS 38.104 Table 5.2-1 (FR1), Table 5.2-2 (FR2) and TS 36.101 Table 5.5-1
+(LTE). An FDD band's uplink range looks just as plausible in that position and
+is silently wrong, which is exactly the bug `tests/test-frequency` was written
+to catch — it re-derives the expected ARFCN ranges from the band edges in MHz
+rather than restating the tables, so a copied uplink range fails.
+
+Two consequences worth remembering:
+
+- **The frequency never comes from the table.** It is computed with the raster
+  formula, so it is exact for any ARFCN on the raster, band known or not. The
+  tables only supply the band *label*.
+- **An ARFCN cannot identify the band.** n1/n65/n66, n2/n25, n5/n26, n12/n85,
+  n41/n90 and n77/n78 share spectrum. The modem always reports the band in
+  `QENG` and `QCAINFO`, so pass it to `nrarfcn_to_mhz()`/`format_frequency()`;
+  the table lookup is only the fallback when it did not.
+
+SUL bands (n80-n84, n86, n89, n95, n97-n99) are deliberately absent: they have
+no downlink, and their ranges would shadow the bands that do.
+
 ## Documentation
 
 - `README.md` - User documentation

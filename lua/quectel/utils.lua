@@ -155,7 +155,7 @@ function M.add_frequency_info(status)
     if status.serving and status.serving.nr5g then
         local nr = status.serving.nr5g
         if nr.arfcn then
-            nr.frequency_mhz = frequency.nrarfcn_to_mhz(nr.arfcn)
+            nr.frequency_mhz = frequency.nrarfcn_to_mhz(nr.arfcn, nr.band)
         end
         if nr.bandwidth then
             nr.bandwidth_mhz = frequency.nr5g_bandwidth_mhz(nr.bandwidth)
@@ -168,7 +168,7 @@ function M.add_frequency_info(status)
         local function enrich_carrier(carrier)
             if carrier.arfcn then
                 if carrier.rat == "5g" then
-                    carrier.frequency_mhz = frequency.nrarfcn_to_mhz(carrier.arfcn)
+                    carrier.frequency_mhz = frequency.nrarfcn_to_mhz(carrier.arfcn, carrier.band)
                 else
                     carrier.frequency_mhz = frequency.earfcn_to_mhz(carrier.arfcn)
                 end
