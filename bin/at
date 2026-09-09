@@ -14,6 +14,11 @@ local DEFAULT_COMMANDS = {
     'AT+QNWPREFCFG="lte_band"',
     'AT+QNWLOCK="common/4g"',
     'AT+QNWLOCK="common/5g"',
+    -- QNWINFO reports the technology, band and channel the modem believes it
+    -- is on, derived independently of QENG and QCAINFO. Capturing all three
+    -- together is what lets a sample pin down QENG's field offsets rather
+    -- than assume them -- see parse_nr5g_sa_fields in quectel/parser.lua.
+    "AT+QNWINFO",
     "AT+QCAINFO",
     'AT+QENG="servingcell"',
     'AT+QENG="neighbourcell"',

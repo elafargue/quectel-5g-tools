@@ -223,6 +223,18 @@ quectel-at ATI                      # Single command
 quectel-at AT+CSQ 'AT+CREG?'        # Multiple commands
 ```
 
+The default set covers identity, operator, band and lock configuration,
+and the three live radio reads (`AT+QNWINFO`, `AT+QCAINFO`,
+`AT+QENG="servingcell"` and `"neighbourcell"`). Its output is in the same
+layout as the sample responses in `CLAUDE.md`, so `quectel-at >
+capture.txt` on a network the parser has not seen produces something that
+can go straight into a test fixture. Capture it both connected and idle:
+the serving-cell response has a different shape in each, and an LTE-only
+attach returns a single-line variant that is a separate parser path.
+
+No IMEI is requested, but `QENG` output does carry cell ID, TAC and
+MCC/MNC — worth a look before sharing a capture.
+
 ### 5g-led-bars
 
 procd daemon that drives the GL-X3000 panel LEDs from the strongest
