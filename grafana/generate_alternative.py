@@ -41,7 +41,11 @@ DEFAULT_INFLUX_INPUT = "${DS_INFLUXDB}"
 DEFAULT_INFINITY_INPUT = "${DS_INFINITY}"
 
 DEFAULT_STATUS_URL = "http://192.168.8.1/cgi-bin/quectel-status"
-# Neighbours live under their own retention policy; see telegraf/quectel.conf.
+# The InfluxQL database name, which a DBRP mapping resolves to a bucket.
+DEFAULT_DATABASE = "systemhealth"
+# Neighbours live under their own retention policy, mapped to a shorter-lived
+# bucket; see telegraf/quectel.conf. InfluxDB 2.x expires whole buckets, never
+# single measurements, so this split is the only way to keep them short.
 DEFAULT_NEIGHBOUR_RP = "short"
 
 OUT = Path(__file__).resolve().parent / "quectel-5g-alternative.json"

@@ -398,12 +398,23 @@ This is the *snapshot* half of the pipeline. The fast numeric series come from
 `5g-collectd` is two AT commands, this endpoint is six. Poll the cheap one
 often and the expensive one rarely.
 
-Neighbours get their own measurement so they can get their own retention.
-Every `(pci, arfcn)` pair is a distinct series, and on a boat under way that
-set turns over continuously — a new set every few miles. Left in a shared
-measurement, that churn grows the index without bound for data nobody queries
-beyond the last few hours. The config file carries the routing for both
-InfluxDB 1.x retention policies and 2.x buckets.
+Neighbours get their own measurement, and their own bucket. Every
+`(pci, arfcn)` pair is a distinct series, and on a boat under way that set
+turns over continuously — a new set every few miles. Left with the rest, that
+churn grows the index without bound for data nobody queries beyond the last
+few hours. InfluxDB 2.x expires whole buckets and never single measurements,
+so a second short-retention bucket is the only way to bound it:
+
+```bash
+influx bucket create --name systemhealth_short --retention 24h
+```
+
+**Telegraf outputs are global** — every input feeds every output unless the
+output filters. Dropping these blocks into an agent that already forwards
+collectd would write that collectd data a second time *and* send the modem
+data wherever collectd currently goes. Both outputs in the file take only
+`quectel_*`; the existing output needs the mirror image, `namedrop =
+["quectel_*"]`.
 
 ### 5g-watchdog
 
