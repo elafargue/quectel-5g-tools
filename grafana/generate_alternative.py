@@ -809,6 +809,28 @@ def _validate(panels: list, seen: set | None = None) -> None:
 
 def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
                     short_uid: str, include_inputs: bool) -> dict:
+    # The two InfluxDB uids must differ, and nothing downstream would say so.
+    # quectel_neighbour is namedrop'd out of the main bucket by
+    # telegraf/quectel.conf, so pointing the neighbour panel at the main
+    # datasource queries a measurement that is deliberately not there: the
+    # panel reads "No data", Grafana reports no error, and the dashboard looks
+    # built correctly. Exactly the silent-blank-panel failure _validate()
+    # exists for, arriving through the one door it cannot see -- it inspects
+    # panels, and by then both uids are simply strings that happen to match.
+    #
+    # Grafana's import dialog is the likelier route in than this CLI: both
+    # inputs declare pluginId "influxdb", so it offers two dropdowns listing
+    # the same datasources, and picking one twice is an easy mistake to make
+    # and a hard one to see.
+    if short_uid == influx_uid:
+        raise SystemExit(
+            f"the short-retention uid and the main InfluxDB uid are both "
+            f"{influx_uid!r}; they must be different datasources. The "
+            f"neighbour bucket is a database of its own (systemhealth_short) "
+            f"because quectel_neighbour is kept out of the main one -- "
+            f"pointing both at it leaves 'Neighbours reported' permanently "
+            f"empty with no error to say why.")
+
     panels = build_panels(influx_uid, infinity_uid, url, short_uid)
     _assign_ids(panels)
     _validate(panels)
