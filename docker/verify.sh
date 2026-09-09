@@ -55,7 +55,12 @@ for r in d.get("results", []):
 
 echo "=== The router answers ==="
 body=$(curl -s --max-time 10 "$ROUTER/cgi-bin/quectel-status" || true)
-echo "$body" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null \
+# printf, not echo: /bin/sh's echo expands backslash escapes on macOS and on
+# dash, so a \n inside any JSON string value arrives as a real newline and the
+# document is no longer parseable. The greps below are unaffected -- they match
+# on measurement and datasource names, which carry no escapes -- but anything
+# handed to a JSON parser has to go through printf.
+printf '%s' "$body" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null \
     && check 1 "status endpoint returns valid JSON" \
     || check 0 "status endpoint returns valid JSON" "$(echo "$body" | head -c 100)"
 
@@ -156,6 +161,31 @@ dash=$(curl -s -u admin:admin \
 echo "$dash" | grep -q '"title"' \
     && check 1 "the dashboard is provisioned" \
     || check 0 "the dashboard is provisioned"
+
+# Provisioned is not the same as wired up correctly. The checks above prove
+# the short-retention datasource exists and that its query returns rows; the
+# panel could still be pointed at the main datasource, where quectel_neighbour
+# is deliberately absent, and every assertion so far would still pass while
+# the panel read "No data" forever.
+#
+# The target's uid, not the panel's: Grafana honours the target when the two
+# disagree, so checking the panel alone would miss the case that actually
+# renders empty.
+nbr_ds=$(printf '%s' "$dash" | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in d.get("dashboard", {}).get("panels", []):
+    if p.get("title") == "Neighbours reported":
+        for t in p.get("targets", []):
+            print(t.get("datasource", {}).get("uid", ""))
+' || true)
+[ "$nbr_ds" = "quectel-influx-short" ] \
+    && check 1 "the neighbour panel queries the short-retention datasource" \
+    || check 0 "the neighbour panel queries the short-retention datasource" \
+             "got '${nbr_ds:-nothing}', wanted 'quectel-influx-short'"
 
 echo ""
 echo "=== $pass passed, $fail failed ==="
