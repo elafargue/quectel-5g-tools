@@ -79,13 +79,23 @@ local LTE_BANDS = {
 -- bands (n80-n84, n86, n89, n95, n97-n99) are therefore absent -- they have
 -- no downlink to look up.
 --
--- Sorted by (arfcn_low, arfcn_high) so the narrower of two overlapping bands
--- is tried first. The overlaps are real -- n1/n65/n66, n2/n25, n5/n26,
--- n12/n85, n41/n90 and n77/n78 all share spectrum -- so an ARFCN alone can
--- never identify the band. Pass the band the modem reported to
--- nrarfcn_to_mhz(); this table is only the fallback when it did not report
--- one. Where the guess is a coin toss (n65/n66 are the same range) the more
--- widely deployed band is listed first.
+-- Every FR1 band in Table 5.2-1 that has a downlink is listed, so a band the
+-- modem reports can always be recognised. Sorted by (arfcn_low, arfcn_high)
+-- so the narrower of two overlapping bands is tried first.
+--
+-- The overlaps are real and unresolvable. n1/n65/n66, n2/n25, n5/n26,
+-- n12/n85, n41/n90 and n77/n78 share spectrum, and the L-band is worse:
+-- 1427-1432 MHz is n51, n76, n91 and n93 at once, 1432-1517 MHz is n50, n75,
+-- n92 and n94, with n74 overlapping from 1475. n50/n51 are TDD while n75/n76
+-- are SDL -- the same spectrum, differing only in whether an uplink shares it
+-- -- and a downlink channel number cannot tell them apart. Nothing but the
+-- network's own signalling can, which is what the modem reports.
+--
+-- So this table is the fallback, not the authority: pass the modem's band to
+-- nrarfcn_to_mhz() and it is used as given. A band derived from here instead
+-- is marked "inferred" and displayed with a "?" so it is never mistaken for a
+-- reading. Among identically ranged bands the lowest number is returned; the
+-- choice is arbitrary and the marker says so.
 --
 -- Format: {band, arfcn_low, arfcn_high, is_fr2}
 local NR5G_BANDS = {
@@ -102,12 +112,23 @@ local NR5G_BANDS = {
     {26, 171800, 178800, false},
     {18, 172000, 175000, false},
     {5, 173800, 178800, false},
+    {100, 183880, 185000, false},
     {8, 185000, 192000, false},
+    -- 1427-1432 MHz: n51 is TDD, n76 SDL, n91/n93 FDD downlinks
     {51, 285400, 286400, false},
+    {76, 285400, 286400, false},
+    {91, 285400, 286400, false},
+    {93, 285400, 286400, false},
+    -- 1432-1517 MHz: n50 is TDD, n75 SDL, n92/n94 FDD downlinks
     {50, 286400, 303400, false},
+    {75, 286400, 303400, false},
+    {92, 286400, 303400, false},
+    {94, 286400, 303400, false},
     {74, 295000, 303600, false},
+    {24, 305000, 311800, false},
     {3, 361000, 376000, false},
     {39, 376000, 384000, false},
+    {101, 380000, 384000, false},
     {2, 386000, 398000, false},
     {25, 386000, 399000, false},
     {70, 399000, 404000, false},
@@ -130,6 +151,10 @@ local NR5G_BANDS = {
     {48, 636667, 646666, false},
     {79, 693334, 733333, false},
     {46, 743334, 795000, false},
+    -- 6 GHz NR-U; n102/n104 are the halves of n96
+    {102, 795000, 828333, false},
+    {96, 795000, 875000, false},
+    {104, 828334, 875000, false},
     -- FR2 Bands (mmWave)
     {258, 2016667, 2070832, true},
     {257, 2054166, 2104165, true},
@@ -169,64 +194,91 @@ end
 -- Highest NR-ARFCN the raster is defined for (TS 38.104 Table 5.4.2.1-1)
 local NRARFCN_MAX = 3279165
 
+--- Test whether an NR-ARFCN falls inside a band's downlink, per the table
+-- @param arfcn NR Absolute Radio Frequency Channel Number
+-- @param band Band number
+-- @return true if it does, false if it does not, nil if the band is unknown
+function M.nr_band_contains(arfcn, band)
+    local known = false
+    for _, entry in ipairs(NR5G_BANDS) do
+        if entry[1] == band then
+            known = true
+            if arfcn >= entry[2] and arfcn <= entry[3] then
+                return true
+            end
+        end
+    end
+    if not known then return nil end
+    return false
+end
+
 --- Convert NR5G NR-ARFCN to frequency in MHz and band number
 --
 -- The frequency comes from the raster formula and never from the band table,
 -- so it is exact for any ARFCN on the raster, band known or not.
 --
--- The band is a label. Overlapping allocations mean an ARFCN maps to several
--- bands (2120 MHz is n1, n65 and n66 alike), so pass the band the modem
--- reported and it is used as long as the ARFCN really falls inside it. Only
--- without one -- or with one that contradicts the ARFCN -- does this fall
--- back to guessing from the table, and the guess may be a different band
--- sharing the same spectrum.
+-- The band is only ever a label, and the modem's is authoritative: it comes
+-- from the network's own signalling, whereas this table is a static copy of a
+-- spec that gets revised. So a reported band is returned as given and is
+-- never replaced by a guess -- including when it is a band this table has
+-- never heard of, which means the table is behind, not that the modem is
+-- wrong. Overlapping allocations make the reverse direction hopeless anyway:
+-- 1450 MHz is a valid n50, n75, n92 and n94 channel all at once.
 --
 -- @param arfcn NR Absolute Radio Frequency Channel Number
 -- @param band Optional band number as reported by the modem
--- @return freq_mhz, band (freq nil if the ARFCN is off the raster; band nil
---         if it belongs to no band we know)
+-- @return freq_mhz, band, source
+--         freq_mhz nil if the ARFCN is off the raster.
+--         source is "reported" when the band came from the caller,
+--         "inferred" when it was guessed here, nil when there is no band.
+--         An inferred band may well be a different band sharing the
+--         spectrum, so callers must present it as a guess.
 function M.nrarfcn_to_mhz(arfcn, band)
     if arfcn < 0 or arfcn > NRARFCN_MAX then
-        return nil, nil
+        return nil, nil, nil
     end
 
     local freq_mhz = nrarfcn_to_freq_khz(arfcn) / 1000.0
-    local guess = nil
+
+    if band then
+        return freq_mhz, band, "reported"
+    end
 
     for _, entry in ipairs(NR5G_BANDS) do
-        local b, start, stop = entry[1], entry[2], entry[3]
-        if arfcn >= start and arfcn <= stop then
-            if b == band then
-                -- The modem's band agrees with the raster: trust it.
-                return freq_mhz, band
-            end
-            guess = guess or b
+        if arfcn >= entry[2] and arfcn <= entry[3] then
+            return freq_mhz, entry[1], "inferred"
         end
     end
 
-    return freq_mhz, guess
+    return freq_mhz, nil, nil
 end
 
 --- Format EARFCN/NR-ARFCN as human-readable frequency string
 -- @param arfcn Channel number
 -- @param is_5g True for NR-ARFCN, false for EARFCN
--- @param band Optional band the modem reported, preferred over the lookup
--- @return String like "1845.0 MHz (B3)", "3731.5 MHz (n78)", "931.0 MHz"
---         when the band is unknown, or "Unknown (186200)" when the channel
---         number itself makes no sense. A nil arfcn is "Unknown": ARFCN 0 is
---         a real raster point, so it cannot double as a missing-value marker.
+-- @param band Optional band the modem reported. Used as given when present.
+-- @return String like "1845.0 MHz (B3)" for a band the modem reported,
+--         "1450.0 MHz (n50?)" for one inferred from the ARFCN -- the "?"
+--         marks a guess that may name a different band sharing the same
+--         spectrum -- "931.0 MHz" when no band could be established at all,
+--         or "Unknown (186200)" when the channel number makes no sense. A
+--         nil arfcn is "Unknown": ARFCN 0 is a real raster point, so it
+--         cannot double as a missing-value marker.
 function M.format_frequency(arfcn, is_5g, band)
     if not arfcn then
         return "Unknown"
     end
 
-    local freq, found
+    local freq, found, source
     local prefix
     if is_5g then
-        freq, found = M.nrarfcn_to_mhz(arfcn, band)
+        freq, found, source = M.nrarfcn_to_mhz(arfcn, band)
         prefix = "n"
     else
+        -- LTE EARFCNs partition cleanly by band, so the lookup is exact and
+        -- there is nothing for a reported band to disambiguate.
         freq, found = M.earfcn_to_mhz(arfcn)
+        source = found and "reported" or nil
         prefix = "B"
     end
     if not freq then
@@ -235,7 +287,8 @@ function M.format_frequency(arfcn, is_5g, band)
     if not found then
         return string.format("%.1f MHz", freq)
     end
-    return string.format("%.1f MHz (%s%d)", freq, prefix, found)
+    return string.format("%.1f MHz (%s%d%s)", freq, prefix, found,
+        source == "inferred" and "?" or "")
 end
 
 -- LTE Bandwidth mappings
@@ -247,10 +300,13 @@ local LTE_BW_RB = {
 }
 
 -- NR5G Bandwidth index mapping
+-- Indices per the RM520N AT manual (<NR_DL_bandwidth>, QENG and QCAINFO).
+-- 15 and 16 sit out of order after 400 MHz in the vendor table, which is why
+-- they are easy to miss; without them a 35 or 45 MHz carrier reads "? MHz".
 local NR5G_BW_INDEX = {
     [0] = 5, [1] = 10, [2] = 15, [3] = 20, [4] = 25, [5] = 30,
     [6] = 40, [7] = 50, [8] = 60, [9] = 70, [10] = 80, [11] = 90,
-    [12] = 100, [13] = 200, [14] = 400
+    [12] = 100, [13] = 200, [14] = 400, [15] = 35, [16] = 45
 }
 
 --- Get LTE bandwidth in MHz from index or RB count

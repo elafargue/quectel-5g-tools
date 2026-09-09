@@ -44,6 +44,11 @@ local NR_FR1_DL = {
     [71] = {617, 652},      [74] = {1475, 1518},    [77] = {3300, 4200},
     [78] = {3300, 3800},    [79] = {4400, 5000},    [85] = {728, 746},
     [90] = {2496, 2690},
+    -- SDL and the rest of the L-band pile-up, plus NR-U
+    [24] = {1525, 1559},    [75] = {1432, 1517},    [76] = {1427, 1432},
+    [91] = {1427, 1432},    [92] = {1432, 1517},    [93] = {1427, 1432},
+    [94] = {1432, 1517},    [96] = {5925, 7125},    [100] = {919.4, 925},
+    [101] = {1900, 1920},   [102] = {5925, 6425},   [104] = {6425, 7125},
 }
 
 -- 3GPP TS 38.104 Table 5.2-2: NR operating bands in FR2.
@@ -81,12 +86,14 @@ local function check_band(band, low_mhz, high_mhz, fr2)
         -- band does not own that channel, so it is not ours to check.
         if freq and freq >= low_mhz and freq <= high_mhz then
             checked = checked + 1
-            local _, named = frequency.nrarfcn_to_mhz(arfcn, band)
-            if named ~= band then
+            -- The table's own range for this band must contain the channel.
+            -- Asking nrarfcn_to_mhz with the band would prove nothing: a
+            -- reported band is echoed back by design.
+            if frequency.nr_band_contains(arfcn, band) ~= true then
                 ok_band = false
                 first_bad_band = first_bad_band or string.format(
-                    "arfcn %d (%.1f MHz) -> %s", arfcn, freq,
-                    named and ("n" .. named) or "no band")
+                    "arfcn %d (%.1f MHz) is outside the table's n%d",
+                    arfcn, freq, band)
             end
             if not got then
                 ok_freq = false
@@ -132,16 +139,21 @@ for _, band in ipairs(ul_bands) do
     local lo, hi = NR_FR1_UL[band][1], NR_FR1_UL[band][2]
     local clean = true
     for mhz = lo, hi do
-        local _, got = frequency.nrarfcn_to_mhz(math.ceil(mhz * 1000 / 5), band)
-        if got == band then clean = false end
+        local arfcn = math.ceil(mhz * 1000 / 5)
+        -- Only where the uplink does not genuinely overlap some downlink:
+        -- n65's uplink runs into n1's, and n26/n5 uplink into n20's.
+        if not NR_FR1_DL[band] or mhz < NR_FR1_DL[band][1]
+                or mhz > NR_FR1_DL[band][2] then
+            if frequency.nr_band_contains(arfcn, band) then clean = false end
+        end
     end
     test(string.format("n%d uplink (%g-%g MHz) is not treated as downlink",
         band, lo, hi), clean)
 end
 
 -- n83 is SUL: uplink only, and its range shadows the n12/n28/n85 downlinks.
-local _, sul = frequency.nrarfcn_to_mhz(145000)
-test("SUL band n83 is not in the downlink table", sul ~= 83)
+test("SUL band n83 is not in the downlink table",
+    frequency.nr_band_contains(145000, 83) == nil)
 
 print("")
 print("=== Testing modem-reported band wins over the lookup ===")
@@ -158,9 +170,40 @@ test("arfcn 424000 + band 66 -> n66", b66 == 66)
 local _, guess = frequency.nrarfcn_to_mhz(424000)
 test("arfcn 424000 with no band falls back to the table", guess ~= nil)
 
--- A band that contradicts the ARFCN is not blindly echoed back.
-local _, bogus = frequency.nrarfcn_to_mhz(648768, 20)
-test("band 20 with an n78 arfcn is rejected", bogus ~= 20)
+-- A reported band is authoritative even when this table disagrees: the
+-- table is the thing more likely to be out of date. The disagreement stays
+-- detectable rather than being silently resolved either way.
+local _, reported, src = frequency.nrarfcn_to_mhz(648768, 20)
+test("a reported band is used as given, not second-guessed", reported == 20)
+test("a reported band is marked as reported", src == "reported")
+test("the disagreement is still detectable",
+    frequency.nr_band_contains(648768, 20) == false)
+
+-- A band this table has never heard of means the table is behind, not that
+-- the modem is wrong.
+local _, unknown_band, usrc = frequency.nrarfcn_to_mhz(648768, 254)
+test("an unknown reported band survives", unknown_band == 254)
+test("an unknown reported band is still 'reported'", usrc == "reported")
+test("an unknown band is reported as unknown by the predicate",
+    frequency.nr_band_contains(648768, 254) == nil)
+
+-- Inferred bands are flagged so they cannot be mistaken for a reading.
+local _, inferred, isrc = frequency.nrarfcn_to_mhz(648768)
+test("an ARFCN alone yields an inferred band", isrc == "inferred")
+test("the inferred band for 648768 is n78", inferred == 78)
+test("an inferred band is printed with a ?",
+    frequency.format_frequency(648768, true) == "3731.5 MHz (n78?)")
+test("a reported band is printed without a ?",
+    frequency.format_frequency(648768, true, 78) == "3731.5 MHz (n78)")
+
+-- The L-band pile-up the ? exists for: 1450 MHz is four bands at once.
+local lband = math.floor(1450 * 1000 / 5)
+test("1450 MHz is a valid n50 channel", frequency.nr_band_contains(lband, 50))
+test("1450 MHz is a valid n75 channel", frequency.nr_band_contains(lband, 75))
+test("1450 MHz is a valid n92 channel", frequency.nr_band_contains(lband, 92))
+test("1450 MHz is a valid n94 channel", frequency.nr_band_contains(lband, 94))
+test("1450 MHz alone is only ever a guess",
+    select(3, frequency.nrarfcn_to_mhz(lband)) == "inferred")
 
 print("")
 print("=== Testing real-world captures ===")
@@ -265,6 +308,42 @@ test("missing NR-ARFCN formats as Unknown",
     frequency.format_frequency(nil, true) == "Unknown")
 test("missing EARFCN formats as Unknown",
     frequency.format_frequency(nil, false) == "Unknown")
+
+print("")
+print("=== Testing bandwidth tables (RM520N AT manual) ===")
+print("")
+
+-- <NR_DL_bandwidth>, QENG and QCAINFO. 15 and 16 sit after 400 MHz in the
+-- vendor table rather than in numeric order, which is how they got missed.
+local NR_BW = {
+    [0] = 5, [1] = 10, [2] = 15, [3] = 20, [4] = 25, [5] = 30, [6] = 40,
+    [7] = 50, [8] = 60, [9] = 70, [10] = 80, [11] = 90, [12] = 100,
+    [13] = 200, [14] = 400, [15] = 35, [16] = 45,
+}
+local bw_ok = true
+for idx, mhz in pairs(NR_BW) do
+    if frequency.nr5g_bandwidth_mhz(idx) ~= mhz then bw_ok = false end
+end
+test("every NR bandwidth index maps to its documented width", bw_ok)
+test("NR index 15 is 35 MHz", frequency.nr5g_bandwidth_mhz(15) == 35)
+test("NR index 16 is 45 MHz", frequency.nr5g_bandwidth_mhz(16) == 45)
+test("an undocumented NR bandwidth index yields nil",
+    frequency.nr5g_bandwidth_mhz(17) == nil)
+
+-- LTE: <DL_bandwidth> is an index in QENG, a resource-block count in QCAINFO
+local LTE_BW_IDX = { [0] = 1.4, [1] = 3, [2] = 5, [3] = 10, [4] = 15, [5] = 20 }
+local LTE_BW_RB = { [6] = 1.4, [15] = 3, [25] = 5, [50] = 10, [75] = 15, [100] = 20 }
+local lte_bw_ok = true
+for idx, mhz in pairs(LTE_BW_IDX) do
+    if frequency.lte_bandwidth_mhz(idx, false) ~= mhz then lte_bw_ok = false end
+end
+for rb, mhz in pairs(LTE_BW_RB) do
+    if frequency.lte_bandwidth_mhz(rb, true) ~= mhz then lte_bw_ok = false end
+end
+test("every LTE bandwidth index and RB count maps correctly", lte_bw_ok)
+test("bandwidth formats to whole MHz", frequency.format_bandwidth(20) == "20 MHz")
+test("an unknown bandwidth formats as ?",
+    frequency.format_bandwidth(nil) == "? MHz")
 
 print("")
 print(string.format("=== %d passed, %d failed ===", passed, failed))
