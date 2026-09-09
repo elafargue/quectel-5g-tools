@@ -1,0 +1,97 @@
+# A whole TIG stack with a modem-shaped thing at the end of it.
+#
+# The pipeline this repo feeds has four moving parts and none of them can be
+# tested in isolation: a Telegraf parser config is only right if InfluxDB ends
+# up holding what the dashboard queries, and the dashboard's queries are only
+# right if they match the tags Telegraf actually wrote. This runs the lot
+# against a fake router, so the whole chain can be exercised without a boat,
+# a modem, or a SIM.
+#
+#   ./up.sh          bring it up (regenerates the dashboard first)
+#   ./verify.sh      assert the data actually arrived
+#   docker compose down -v    throw it all away
+#
+# Grafana is on http://localhost:13000 with anonymous admin -- this is a
+# development stack and the credentials below are deliberately worthless.
+#
+# The published ports are deliberately not the obvious ones. A machine that
+# does this kind of work usually already has an InfluxDB on 8086 and a Grafana
+# on 3000, and a development stack that cannot start next to the real thing is
+# not much of a development stack. Override any of them:
+#
+#   QUECTEL_GRAFANA_PORT=3005 ./up.sh
+
+name: quectel-tig
+
+services:
+  # Stands in for a GL-X3000. Walks the signal, hands over, drops the NR leg
+  # and sometimes refuses to answer, so every panel and every failure path has
+  # something to show.
+  fake-router:
+    image: python:3.12-alpine
+    command: python3 /srv/serve.py
+    volumes:
+      - ./fake-router/serve.py:/srv/serve.py:ro
+    environment:
+      PORT: "8080"
+      FAIL_RATE: "0.02"
+      NR_DROP_RATE: "0.12"
+    ports:
+      - "${QUECTEL_ROUTER_PORT:-18080}:8080"
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: quectel-dev-password
+      DOCKER_INFLUXDB_INIT_ORG: boat
+      DOCKER_INFLUXDB_INIT_BUCKET: systemhealth
+      DOCKER_INFLUXDB_INIT_RETENTION: 720h
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: quectel-dev-token
+    volumes:
+      # Creates the short-retention bucket and both DBRP mappings, which is
+      # what lets 2.x answer InfluxQL at all.
+      - ./influxdb/init:/docker-entrypoint-initdb.d:ro
+      - influxdb-data:/var/lib/influxdb2
+    ports:
+      - "${QUECTEL_INFLUX_PORT:-18086}:8086"
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  telegraf:
+    image: telegraf:1.30-alpine
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    environment:
+      INFLUX_TOKEN: quectel-dev-token
+      INFLUX_ORG: boat
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      fake-router:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    environment:
+      GF_INSTALL_PLUGINS: yesoreyeram-infinity-datasource
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_USERS_DEFAULT_THEME: dark
+      INFLUX_TOKEN: quectel-dev-token
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${QUECTEL_GRAFANA_PORT:-13000}:3000"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+volumes:
+  influxdb-data:

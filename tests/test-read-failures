@@ -92,6 +92,16 @@ test("serving cell parsed", healthy.serving ~= nil)
 test("NR5G serving cell parsed", healthy.serving and healthy.serving.nr5g ~= nil)
 test("band comes from the modem, not a guess",
     healthy.serving and healthy.serving.nr5g.band == 78)
+-- Numeric forms of the cell identity, so a time-series database can index a
+-- bounded set of tags and still graph which site we are on: a hex cell_id as
+-- a tag would be a fresh index entry for every cell ever visited.
+test("the eNodeB number is derived for consumers",
+    healthy.serving and healthy.serving.lte.enodeb == 206886)
+test("the TAC is offered in decimal too",
+    healthy.serving and healthy.serving.lte.tac_decimal == 3043)
+test("the hex forms are still there",
+    healthy.serving and healthy.serving.lte.cell_id == "328261F"
+        and healthy.serving.lte.tac == "BE3")
 
 print("")
 print("=== Testing get_status when the modem stops answering ===")

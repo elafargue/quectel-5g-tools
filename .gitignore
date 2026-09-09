@@ -1,3 +1,8 @@
 .DS_Store
 __pycache__
 .claude
+
+# Generated at stack start-up by docker/up.sh, bound to that stack's
+# datasource uids; the committed grafana/quectel-5g-alternative.json is the
+# portable one.
+docker/grafana/dashboards/*.json

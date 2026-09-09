@@ -39,14 +39,16 @@ INFINITY_PLUGIN_NAME = "Infinity"
 
 DEFAULT_INFLUX_INPUT = "${DS_INFLUXDB}"
 DEFAULT_INFINITY_INPUT = "${DS_INFINITY}"
+DEFAULT_INFLUX_SHORT_INPUT = "${DS_INFLUXDB_SHORT}"
 
 DEFAULT_STATUS_URL = "http://192.168.8.1/cgi-bin/quectel-status"
 # The InfluxQL database name, which a DBRP mapping resolves to a bucket.
 DEFAULT_DATABASE = "systemhealth"
-# Neighbours live under their own retention policy, mapped to a shorter-lived
-# bucket; see telegraf/quectel.conf. InfluxDB 2.x expires whole buckets, never
-# single measurements, so this split is the only way to keep them short.
-DEFAULT_NEIGHBOUR_RP = "short"
+# Neighbours live in a shorter-lived bucket of their own; see
+# telegraf/quectel.conf. InfluxDB 2.x expires whole buckets and never single
+# measurements, so the split is the only way to keep them short -- and it has
+# to be reached as a separate database, because 2.x's v1 layer answers a
+# "short"."measurement" qualification with no series and no error.
 
 OUT = Path(__file__).resolve().parent / "quectel-5g-alternative.json"
 
@@ -281,8 +283,9 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None) -> dict:
 # panels
 # ---------------------------------------------------------------------------
 
-def build_panels(iu: str, fu: str, url: str, rp: str) -> list:
-    """iu = InfluxDB uid, fu = Infinity uid, url = status endpoint, rp = neighbour RP."""
+def build_panels(iu: str, fu: str, url: str, su: str) -> list:
+    """iu = InfluxDB uid, fu = Infinity uid, url = status endpoint,
+    su = uid of the datasource holding the short-retention neighbour bucket."""
     panels: list = []
 
     # -- Now ----------------------------------------------------------------
@@ -401,7 +404,8 @@ def build_panels(iu: str, fu: str, url: str, rp: str) -> list:
     panels.append(state_timeline(
         "Bands in use", gp(12, 23, 12, 6),
         [iql(iu, "A",
-             'SELECT last("rsrp") FROM "quectel_carrier" WHERE $timeFilter '
+             'SELECT last("rsrp") FROM "quectel_carrier_pcc", '
+             '"quectel_carrier_scc" WHERE $timeFilter '
              'GROUP BY time($__interval), "rat", "band" fill(none)',
              "$tag_rat $tag_band")],
         influx(iu), thresholds=RSRP_STEPS))
@@ -410,29 +414,45 @@ def build_panels(iu: str, fu: str, url: str, rp: str) -> list:
     panels.append(row("Cells and coverage", 29))
 
     # A moving vessel changes site constantly; this is the record of it.
-    panels.append(state_timeline(
+    #
+    # As a value rather than as a series per site: cell_id is a different
+    # string for every cell ever visited, so grouping by it would need it as a
+    # tag, and a tag lives as long as the bucket -- two years of every cell on
+    # the voyage. enodeb is the same identity as a number, so the graph steps
+    # at each handover and the index stays bounded.
+    panels.append(timeseries(
         "Serving site (eNodeB)", gp(0, 30, 12, 6),
         [iql(iu, "A",
-             'SELECT last("rsrp") FROM "quectel_lte" WHERE $timeFilter '
-             'GROUP BY time($__interval), "cell_id" fill(none)', "$tag_cell_id")],
-        influx(iu), thresholds=RSRP_STEPS))
+             'SELECT last("enodeb") FROM "quectel_lte" WHERE $timeFilter '
+             'GROUP BY time($__interval) fill(previous)', "eNodeB")],
+        influx(iu), fill=0))
 
     # How much company the serving cell has. A thinning neighbour list is the
     # early sign of running out of coverage, and it moves before RSRP does.
+    #
+    # Its own datasource, because neighbours live in a bucket that expires in a
+    # day and an InfluxQL datasource carries exactly one database. The
+    # "short"."quectel_neighbour" qualification that would avoid a second
+    # datasource is not honoured by InfluxDB 2.x's v1 layer -- it answers with
+    # no series and no error at all.
+    #
+    # count() over a field rather than distinct() over a tag: pci is a tag
+    # here, and InfluxQL's distinct() does not operate on tags. It returns
+    # nothing, silently, which is a slow way to find out.
     panels.append(timeseries(
-        "Neighbours visible", gp(12, 30, 12, 6),
-        [iql(iu, "A",
-             'SELECT count(distinct("pci")) FROM "%s"."quectel_neighbour" '
-             'WHERE $timeFilter GROUP BY time($__interval), "scope" fill(0)'
-             % rp,
+        "Neighbours reported", gp(12, 30, 12, 6),
+        [iql(su, "A",
+             'SELECT count("rsrp") FROM "quectel_neighbour" '
+             'WHERE $timeFilter GROUP BY time($__interval), "scope" fill(0)',
              "$tag_scope")],
-        influx(iu), fill=30))
+        influx(su), fill=30))
 
     panels.append(timeseries(
         "Aggregated carriers", gp(0, 36, 12, 6),
         [iql(iu, "A",
-             'SELECT count(distinct("band")) FROM "quectel_carrier" '
-             'WHERE $timeFilter GROUP BY time($__interval), "rat" fill(0)',
+             'SELECT count(distinct("band")) FROM "quectel_carrier_pcc", '
+             '"quectel_carrier_scc" WHERE $timeFilter '
+             'GROUP BY time($__interval), "rat" fill(0)',
              "$tag_rat")],
         influx(iu), fill=30, min_=0))
 
@@ -442,9 +462,10 @@ def build_panels(iu: str, fu: str, url: str, rp: str) -> list:
     panels.append(timeseries(
         "Carrier frequency", gp(12, 36, 12, 6),
         [iql(iu, "A",
-             'SELECT mean("frequency_mhz") FROM "quectel_carrier" '
-             'WHERE $timeFilter GROUP BY time($__interval), "rat", "band" '
-             'fill(none)', "$tag_rat $tag_band")],
+             'SELECT mean("frequency_mhz") FROM "quectel_carrier_pcc", '
+             '"quectel_carrier_scc" WHERE $timeFilter '
+             'GROUP BY time($__interval), "rat", "band" fill(none)',
+             "$tag_rat $tag_band")],
         # Grafana has no megahertz unit and "hertz" would label 1840 MHz as
         # 1840 Hz. A custom suffix is the honest option.
         influx(iu), unit="suffix:MHz"))
@@ -520,8 +541,8 @@ def _validate(panels: list, seen: set | None = None) -> None:
 
 
 def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
-                    rp: str, include_inputs: bool) -> dict:
-    panels = build_panels(influx_uid, infinity_uid, url, rp)
+                    short_uid: str, include_inputs: bool) -> dict:
+    panels = build_panels(influx_uid, infinity_uid, url, short_uid)
     _assign_ids(panels)
     _validate(panels)
 
@@ -559,6 +580,11 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
              "description": "InfluxDB, queried with InfluxQL",
              "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
              "pluginName": INFLUX_PLUGIN_NAME},
+            {"name": "DS_INFLUXDB_SHORT", "label": INFLUX_PLUGIN_NAME + " (short)",
+             "description": "InfluxDB database holding the short-retention "
+                            "neighbour bucket",
+             "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
+             "pluginName": INFLUX_PLUGIN_NAME},
             {"name": "DS_INFINITY", "label": INFINITY_PLUGIN_NAME,
              "description": "Infinity, for the live status endpoint",
              "type": "datasource", "pluginId": INFINITY_PLUGIN_ID,
@@ -585,17 +611,20 @@ def main() -> int:
                     help="bind to an explicit Infinity datasource uid")
     ap.add_argument("--url", default=DEFAULT_STATUS_URL,
                     help="the router's JSON status endpoint")
-    ap.add_argument("--neighbour-rp", default=DEFAULT_NEIGHBOUR_RP,
-                    help="retention policy holding quectel_neighbour")
+    ap.add_argument("--influxdb-short-uid", default=DEFAULT_INFLUX_SHORT_INPUT,
+                    help="datasource uid for the short-retention neighbour "
+                         "bucket (a second InfluxDB datasource, since an "
+                         "InfluxQL one carries only a single database)")
     args = ap.parse_args()
 
     # Explicit uids mean the dashboard is bound to one instance, so the import
     # prompt would have nothing to ask about.
     include_inputs = (args.influxdb_uid == DEFAULT_INFLUX_INPUT
-                      and args.infinity_uid == DEFAULT_INFINITY_INPUT)
+                      and args.infinity_uid == DEFAULT_INFINITY_INPUT
+                      and args.influxdb_short_uid == DEFAULT_INFLUX_SHORT_INPUT)
 
     dash = build_dashboard(args.influxdb_uid, args.infinity_uid,
-                           args.url, args.neighbour_rp, include_inputs)
+                           args.url, args.influxdb_short_uid, include_inputs)
     text = json.dumps(dash, indent=2, sort_keys=False) + "\n"
 
     if args.stdout:

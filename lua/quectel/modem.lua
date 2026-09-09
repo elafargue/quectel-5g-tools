@@ -458,6 +458,7 @@ function M:get_status()
     status.neighbours = read("neighbours", "neighbours", self.get_neighbours)
 
     utils.add_frequency_info(status)
+    utils.add_cell_identity(status)
     utils.backfill_from_serving(status)
 
     if #errors > 0 then
@@ -488,6 +489,7 @@ function M:get_signal_status()
     local status = { serving = serving, ca = ca }
 
     utils.add_frequency_info(status)
+    utils.add_cell_identity(status)
     utils.backfill_from_serving(status)
 
     return status

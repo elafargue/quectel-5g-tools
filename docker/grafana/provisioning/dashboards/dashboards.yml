@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: quectel
+    type: file
+    # Editable, so the stack is somewhere to try a panel change before
+    # writing it into generate_alternative.py.
+    allowUiUpdates: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

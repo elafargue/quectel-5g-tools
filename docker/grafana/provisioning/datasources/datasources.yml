@@ -1,0 +1,48 @@
+apiVersion: 1
+
+datasources:
+  # InfluxQL rather than Flux: 2.x speaks it through the DBRP mappings the
+  # init script creates, and the dashboard is written in it.
+  - name: InfluxDB
+    uid: quectel-influx
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: systemhealth
+    isDefault: true
+    jsonData:
+      httpMode: POST
+      # 2.x authenticates with a token even on the v1 query API, and Grafana's
+      # InfluxQL mode has no token field -- it expects v1 username/password.
+      # A raw header is the way through.
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: Token $INFLUX_TOKEN
+
+  # Neighbours live in a bucket of their own so they can expire in a day, and
+  # a Grafana InfluxQL datasource carries exactly one database with no way to
+  # name a retention policy per panel. The "short"."measurement" syntax that
+  # would avoid this is not honoured by 2.x's v1 layer: it answers with no
+  # series and no error, which is the worst of both. A second datasource is
+  # what actually works.
+  - name: InfluxDB (short retention)
+    uid: quectel-influx-short
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: systemhealth_short
+    jsonData:
+      httpMode: POST
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: Token $INFLUX_TOKEN
+
+  # Reads the router's status endpoint straight, for the live snapshot row.
+  # Grafana's backend does the fetching, so the browser never needs a route to
+  # the router.
+  - name: Infinity
+    uid: quectel-infinity
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    jsonData:
+      allowed_hosts_enabled: false

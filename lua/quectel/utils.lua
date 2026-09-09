@@ -188,6 +188,25 @@ function M.add_frequency_info(status)
     end
 end
 
+--- Add the numeric cell identity to the serving LTE cell
+-- Modifies the status table in place
+--
+-- cell_id is a hex string, which is fine to read and useless to store: any
+-- database that indexes it by value grows an entry per cell ever visited, and
+-- a vessel under way visits a great many. The eNodeB number derived from it
+-- carries the same information as a plain number, so it can live as a value
+-- rather than as an identifier and be graphed directly -- a handover reads as
+-- a step. tac_decimal is the same argument for the tracking area.
+-- @param status Status table with a serving field
+function M.add_cell_identity(status)
+    if not (status.serving and status.serving.lte) then return end
+    local lte = status.serving.lte
+    lte.enodeb = M.extract_enodeb(lte.cell_id)
+    if lte.tac then
+        lte.tac_decimal = tonumber(lte.tac, 16)
+    end
+end
+
 --- Backfill carrier aggregation entries with serving cell data
 -- QCAINFO reports rssnr, which is NOT the same as SINR from
 -- QENG="servingcell", and in some shapes reports no signal fields at

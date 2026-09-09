@@ -1388,7 +1388,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
+          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat $tag_band"
@@ -1466,7 +1466,7 @@
       "id": 16
     },
     {
-      "type": "state-timeline",
+      "type": "timeseries",
       "title": "Serving site (eNodeB)",
       "gridPos": {
         "h": 6,
@@ -1485,47 +1485,52 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"rsrp\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval), \"cell_id\" fill(none)",
+          "query": "SELECT last(\"enodeb\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval) fill(previous)",
           "rawQuery": true,
           "resultFormat": "time_series",
-          "alias": "$tag_cell_id"
+          "alias": "eNodeB"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "lineWidth": 0,
-            "fillOpacity": 80,
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "gradientMode": "opacity",
             "spanNulls": false,
-            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
+            },
+            "insertNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "palette-classic"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": -100
-              },
-              {
-                "color": "yellow",
-                "value": -90
-              },
-              {
                 "color": "green",
-                "value": -80
+                "value": null
               }
             ]
           }
@@ -1533,25 +1538,27 @@
         "overrides": []
       },
       "options": {
-        "mergeValues": true,
-        "showValue": "auto",
-        "alignValue": "center",
-        "rowHeight": 0.9,
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "min",
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "id": 17
     },
     {
       "type": "timeseries",
-      "title": "Neighbours visible",
+      "title": "Neighbours reported",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1560,16 +1567,16 @@
       },
       "datasource": {
         "type": "influxdb",
-        "uid": "${DS_INFLUXDB}"
+        "uid": "${DS_INFLUXDB_SHORT}"
       },
       "targets": [
         {
           "datasource": {
             "type": "influxdb",
-            "uid": "${DS_INFLUXDB}"
+            "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT count(distinct(\"pci\")) FROM \"short\".\"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(0)",
+          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(0)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
@@ -1660,7 +1667,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT count(distinct(\"band\")) FROM \"quectel_carrier\" WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(0)",
+          "query": "SELECT count(distinct(\"band\")) FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(0)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat"
@@ -1752,7 +1759,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
+          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat $tag_band"
@@ -1854,6 +1861,14 @@
       "name": "DS_INFLUXDB",
       "label": "InfluxDB",
       "description": "InfluxDB, queried with InfluxQL",
+      "type": "datasource",
+      "pluginId": "influxdb",
+      "pluginName": "InfluxDB"
+    },
+    {
+      "name": "DS_INFLUXDB_SHORT",
+      "label": "InfluxDB (short)",
+      "description": "InfluxDB database holding the short-retention neighbour bucket",
       "type": "datasource",
       "pluginId": "influxdb",
       "pluginName": "InfluxDB"
