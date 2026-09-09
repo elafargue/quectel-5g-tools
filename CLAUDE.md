@@ -151,6 +151,33 @@ advertises must be present in the frequency tables. That is a bound set by the
 hardware rather than by our reading of the spec, and it is the test that would
 have caught n75/n76 being missing.
 
+### Third operator capture: Free Mobile France
+
+Test 20 in `tests/test-parser`, Free (208/15). This one is the proof that the
+band table bug was not theoretical: an **n28 carrier at ARFCN 156510**. The
+pre-fix table listed n28 as 145800-154600 — neither its downlink nor its
+uplink — so 156510 fell outside it and inside the range then filed under n20.
+This live cell displayed as **n20**.
+
+Against the old table the frequency suite reports 64 failures, three of them
+this carrier. Note which three: asking `format_frequency(156510, true, 28)`
+still answers n28, because a reported band is echoed by design. It is
+`nr_band_contains()` and the no-band inference that catch a bad table, which
+is why the fixture asserts all of them rather than just the pretty output.
+
+It also adds, against KT's:
+
+- **FDD NR** (KT's n78 is TDD) at **15 kHz subcarrier spacing**, `scs` 0
+  against KT's 1 — low band and mid band differ here, and one fixture alone
+  cannot catch a swap
+- a **seven**-digit cell ID, where KT's is six
+- neighbours that are all intra-frequency; KT's capture mixes intra and inter,
+  and the two shapes differ by a trailing field
+- a populated **SPN** (`"Free","Free","Free"`), where TIM and KT both send an
+  empty third field. Nothing before this proved the operator name is read from
+  field 1 rather than from whichever field happened to be non-empty. The
+  parser deliberately does not expose SPN; add it if something ever needs it.
+
 ## SINR vs RSSNR
 
 **Important**: The `AT+QCAINFO` command reports a field that Quectel documentation calls `rssnr`, which is **NOT** the same as SINR from `AT+QENG="servingcell"`.

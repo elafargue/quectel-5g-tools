@@ -412,6 +412,92 @@ test("KT operator name", kt_op and kt_op.operator == "KT")
 test("KT mcc/mnc 45008", kt_op and kt_op.mcc_mnc == "45008")
 print("")
 
+-- Test 20: Free Mobile France (208/15), captured on an RM520N-GL
+--
+-- The one that matters most: an n28 carrier. n28 is FDD low band, and the
+-- band table had it wrong before this branch -- 145800-154600, which is
+-- neither n28's downlink nor its uplink. ARFCN 156510 fell outside it and
+-- inside the range then filed under n20, so this exact carrier displayed as
+-- n20. A real reading that the old table got wrong, not a constructed one.
+--
+-- It is also the first FDD NR sample here (KT's n78 is TDD) and the first
+-- with 15 kHz subcarrier spacing, which is what low band uses.
+print("Test 20: Free Mobile France capture (208/15, n28 FDD)")
+
+local free_serving = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN"\n' ..
+    '+QENG: "LTE","FDD",208,15,6773F52,424,1675,3,4,4,579,-89,-9,-61,12,10,150,-\n' ..
+    '+QENG: "NR5G-NSA",208,15,424,-84,7,-11,156510,28,1,0\n\nOK')
+
+test("Free LTE band 3", free_serving.lte and free_serving.lte.band == 3)
+test("Free LTE earfcn 1675", free_serving.lte and free_serving.lte.arfcn == 1675)
+test("Free LTE pci 424", free_serving.lte and free_serving.lte.pci == 424)
+test("Free LTE tac 579", free_serving.lte and free_serving.lte.tac == "579")
+test("Free LTE rsrp -89", free_serving.lte and free_serving.lte.rsrp == -89)
+test("Free LTE sinr 12", free_serving.lte and free_serving.lte.sinr == 12)
+-- Seven-digit cell ID, in contrast to KT's six: 0x6773F52 >> 8 = 0x6773F
+test("Free seven-digit cell id yields an eNodeB",
+    utils.extract_enodeb(free_serving.lte.cell_id) == 423743)
+
+test("Free NR5G band 28", free_serving.nr5g and free_serving.nr5g.band == 28)
+test("Free NR5G arfcn 156510", free_serving.nr5g and free_serving.nr5g.arfcn == 156510)
+test("Free NR5G rsrp -84", free_serving.nr5g and free_serving.nr5g.rsrp == -84)
+test("Free NR5G sinr 7", free_serving.nr5g and free_serving.nr5g.sinr == 7)
+test("Free NR5G rsrq -11", free_serving.nr5g and free_serving.nr5g.rsrq == -11)
+-- scs 0 is 15 kHz. KT's n78 reports scs 1, 30 kHz. Low band FDD and mid band
+-- TDD differ here, so a fixture with only one of them cannot catch a swap.
+test("Free NR5G scs 0 (15 kHz)", free_serving.nr5g and free_serving.nr5g.scs == 0)
+
+local free_ca = parser.parse_qcainfo(
+    '+QCAINFO: "PCC",1675,75,"LTE BAND 3",1,424,-89,-9,-60,5\n' ..
+    '+QCAINFO: "SCC",156510,1,"NR5G BAND 28",424\n\nOK')
+
+test("Free PCC band 3", free_ca.pcc and free_ca.pcc.band == 3)
+test("Free PCC home network state 1", free_ca.pcc and free_ca.pcc.state == 1)
+test("Free has one secondary carrier", #free_ca.scc == 1)
+test("Free SCC is the NR carrier", free_ca.scc[1].rat == "5g")
+test("Free SCC band 28", free_ca.scc[1].band == 28)
+test("Free SCC arfcn 156510", free_ca.scc[1].arfcn == 156510)
+
+local free_status = { serving = free_serving, ca = free_ca }
+utils.add_frequency_info(free_status)
+utils.backfill_from_serving(free_status)
+
+-- Bandwidth from two encodings again: QENG index 4 and QCAINFO 75 RB.
+test("Free LTE bandwidth agrees across QENG index and QCAINFO RB count",
+    free_serving.lte.bandwidth_dl_mhz == 15 and free_ca.pcc.bandwidth_mhz == 15)
+test("Free NR bandwidth index 1 is 10 MHz",
+    free_serving.nr5g.bandwidth_mhz == 10)
+test("Free LTE earfcn 1675 is 1852.5 MHz",
+    math.abs(free_serving.lte.frequency_mhz - 1852.5) < 0.001)
+-- 156510 x 5 kHz = 782.55 MHz, inside n28's downlink of 758-803 MHz
+test("Free NR arfcn 156510 is 782.55 MHz",
+    math.abs(free_serving.nr5g.frequency_mhz - 782.55) < 0.001)
+
+local free_nb = parser.parse_neighbours(
+    '+QENG: "neighbourcell intra","LTE",1675,386,-15,-95,-67,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell intra","LTE",1675,424,-9,-89,-60,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell intra","LTE",1675,423,-14,-91,-67,-,-,-,-,-,-\n\nOK')
+
+test("Free three neighbours parsed", #free_nb == 3)
+-- All intra here, where KT's capture mixes intra and inter. The two shapes
+-- differ by a trailing field, so a fixture wants both.
+local all_intra = true
+for _, n in ipairs(free_nb) do
+    if n.scope ~= "intra" then all_intra = false end
+end
+test("Free neighbours are all intra-frequency", all_intra)
+test("Free neighbour pci 386 rsrp -95",
+    free_nb[1].pci == 386 and free_nb[1].rsrp == -95)
+
+-- First capture with a populated SPN (third field). TIM and KT both send "",
+-- so nothing until now proved the operator name is read from field 1 rather
+-- than happening to be whichever field was non-empty.
+local free_op = parser.parse_qspn('+QSPN: "Free","Free","Free",0,"20815"\n\nOK')
+test("Free operator name", free_op and free_op.operator == "Free")
+test("Free mcc/mnc 20815", free_op and free_op.mcc_mnc == "20815")
+print("")
+
 print("=== Results ===")
 print(string.format("Passed: %d, Failed: %d", passed, failed))
 

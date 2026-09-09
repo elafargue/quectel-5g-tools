@@ -364,6 +364,24 @@ test("n75 and n50 cover the same channel",
 test("n76 and n51 cover the same channel",
     frequency.nr_band_contains(285500, 51) and frequency.nr_band_contains(285500, 76))
 
+-- Free Mobile France (208/15), captured on an RM520N-GL. This is the carrier
+-- the original table got wrong in the field, not in theory: n28 was listed as
+-- 145800-154600, which is neither its downlink nor its uplink, and 156510
+-- fell outside that and inside the range then filed under n20. A live n28
+-- cell displayed as n20. Both halves are asserted, because fixing n28 without
+-- fixing n20 would still have produced the wrong label.
+test("Free n28 carrier resolves to n28",
+    frequency.format_frequency(156510, true, 28) == "782.5 MHz (n28)")
+test("Free n28 carrier is inferred as n28 too",
+    frequency.format_frequency(156510, true) == "782.5 MHz (n28?)")
+test("156510 is inside n28", frequency.nr_band_contains(156510, 28) == true)
+test("156510 is NOT inside n20", frequency.nr_band_contains(156510, 20) == false)
+-- n28 downlink is 758-803 MHz; 156510 x 5 kHz = 782.55
+test("156510 lands in n28's downlink",
+    math.abs((frequency.nrarfcn_to_mhz(156510)) - 782.55) < 0.001)
+test("Free LTE B3 anchor at earfcn 1675",
+    frequency.format_frequency(1675, false) == "1852.5 MHz (B3)")
+
 -- KT Korea, captured on a GL-X3000. 636672 is inside n78 and n48 both, so
 -- it is a real instance of the ambiguity the "?" marker exists for.
 test("KT n78 carrier resolves with the reported band",
