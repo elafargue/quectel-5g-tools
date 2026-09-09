@@ -1,0 +1,180 @@
+#!/usr/bin/env lua
+-- 5g-collectd: feed Quectel modem signal metrics to collectd's exec plugin
+--
+-- Runs forever, printing PUTVAL lines on stdout, which is what the exec
+-- plugin reads. Install and wire up per the README.
+--
+-- Why Lua rather than a shell script around `5g-info --json`:
+--
+--   * `5g-info --json` calls get_status(), which is six AT commands. This
+--     uses get_signal_status(), which is two. At a 30 second interval that
+--     is the difference between 5760 and 17280 AT round trips a day on a
+--     serial port that 5g-led-bars, 5g-watchdog and any interactive
+--     5g-monitor are also contending for.
+--   * no jq, so no extra package.
+--   * one modem object for the life of the process, so the port lock is
+--     taken and released around each read rather than per invocation.
+--
+-- On failure it prints nothing at all for the failed reading. A gap in the
+-- RRD is the truth -- we did not measure -- whereas a zero or a repeated
+-- previous value is a fabrication that graphs as signal. This is the same
+-- contract get_signal_status() enforces upstream.
+
+package.path = "/usr/lib/lua/?.lua;/usr/lib/lua/?/init.lua;" .. package.path
+
+local quectel = require("quectel")
+local posix_signal = require("posix.signal")
+
+local hostname = os.getenv("COLLECTD_HOSTNAME") or "localhost"
+local interval = tonumber(os.getenv("COLLECTD_INTERVAL")) or 30
+
+-- Every read contends with 5g-led-bars (10s), 5g-watchdog, and any
+-- interactive 5g-monitor for the one AT port. The lock serialises them, but
+-- a holder that has to wait longer than its own timeout fails the read, and
+-- a failed read is a hole in the graph. 10s is the floor the README asks
+-- for; below that the port is the bottleneck rather than the modem.
+local MIN_INTERVAL = 10
+if interval < MIN_INTERVAL then interval = MIN_INTERVAL end
+
+local running = true
+local once = false
+
+for i = 1, #arg do
+    local a = arg[i]
+    if a == "--once" then
+        once = true
+    elseif a == "--interval" then
+        interval = tonumber(arg[i + 1]) or interval
+        if interval < MIN_INTERVAL then interval = MIN_INTERVAL end
+    elseif a == "--help" or a == "-h" then
+        print("Usage: 5g-collectd [--interval N] [--once]")
+        print("")
+        print("Prints collectd PUTVAL lines for Quectel modem signal metrics.")
+        print("Intended for collectd's exec plugin; --once prints one sample")
+        print("and exits, which is how to check the output by hand.")
+        print("")
+        print("Reads COLLECTD_HOSTNAME and COLLECTD_INTERVAL from the")
+        print("environment, as the exec plugin sets them.")
+        os.exit(0)
+    end
+end
+
+-- collectd reads our stdout through a pipe, which is block buffered by
+-- default. Without this a sample sits in the buffer until enough others
+-- accumulate to flush it, and every value arrives stamped minutes late.
+io.stdout:setvbuf("line")
+
+local function shutdown()
+    running = false
+end
+posix_signal.signal(posix_signal.SIGTERM, shutdown)
+posix_signal.signal(posix_signal.SIGINT, shutdown)
+
+-- Everything is emitted as `gauge`, whose types.db definition is U:U --
+-- unbounded both ways.
+--
+-- The semantically prettier types do not fit. signal_power is U:0, fine for
+-- RSRP and RSSI but not for SINR, which is routinely positive. signal_quality
+-- is 0:U, minimum zero, so RSRQ -- always negative -- would be rejected as
+-- out of range and stored as NaN. A single unbounded type costs nothing here
+-- because the type instance already names the measure, and it cannot silently
+-- discard a reading for being the wrong sign.
+local function putval(plugin_instance, type_instance, value)
+    if value == nil then return end
+    print(string.format("PUTVAL %s/exec-quectel_%s/gauge-%s interval=%d N:%s",
+        hostname, plugin_instance, type_instance, interval, tostring(value)))
+end
+
+-- Carriers are addressed by role and slot -- pcc, scc0, scc1 -- and never by
+-- band. Band is a property of the carrier, not its identity: putting it in
+-- the path would mint a new RRD file at every handover, scatter one signal
+-- across a dozen files, and leave each of them a stub. The band is emitted as
+-- a value instead, so a handover shows up as a step in a graph rather than as
+-- a gap and a new file.
+local function emit_carrier(slot, c)
+    putval(slot, "rsrp", c.rsrp)
+    putval(slot, "rsrq", c.rsrq)
+    putval(slot, "rssi", c.rssi)
+    putval(slot, "sinr", c.sinr)
+    putval(slot, "band", c.band)
+    putval(slot, "pci", c.pci)
+    putval(slot, "arfcn", c.arfcn)
+    putval(slot, "frequency_mhz", c.frequency_mhz)
+    putval(slot, "bandwidth_mhz", c.bandwidth_mhz)
+end
+
+local modem = quectel.create_modem()
+
+local function sample()
+    -- get_signal_status() returns nil rather than a half-filled table when
+    -- either read fails, so there is no partial sample to mistake for a
+    -- complete one.
+    local ok, status = pcall(function() return modem:get_signal_status() end)
+    modem:close()
+
+    if not ok or not status then
+        -- Deliberately silent. collectd treats a missing value as unknown and
+        -- draws a gap; anything we invented here would draw as signal.
+        return false
+    end
+
+    local serving = status.serving or {}
+
+    if serving.lte then
+        local lte = serving.lte
+        putval("lte", "rsrp", lte.rsrp)
+        putval("lte", "rsrq", lte.rsrq)
+        putval("lte", "rssi", lte.rssi)
+        putval("lte", "sinr", lte.sinr)
+        putval("lte", "band", lte.band)
+        putval("lte", "pci", lte.pci)
+        putval("lte", "earfcn", lte.arfcn)
+        putval("lte", "frequency_mhz", lte.frequency_mhz)
+        putval("lte", "bandwidth_dl_mhz", lte.bandwidth_dl_mhz)
+        putval("lte", "bandwidth_ul_mhz", lte.bandwidth_ul_mhz)
+    end
+
+    if serving.nr5g then
+        local nr = serving.nr5g
+        putval("nr5g", "rsrp", nr.rsrp)
+        putval("nr5g", "rsrq", nr.rsrq)
+        putval("nr5g", "sinr", nr.sinr)
+        putval("nr5g", "band", nr.band)
+        putval("nr5g", "pci", nr.pci)
+        putval("nr5g", "arfcn", nr.arfcn)
+        putval("nr5g", "frequency_mhz", nr.frequency_mhz)
+        putval("nr5g", "bandwidth_mhz", nr.bandwidth_mhz)
+    end
+
+    -- Whether NR is attached at all is the single most useful series on a
+    -- 5G router: an NSA anchor that quietly loses its NR leg looks fine on
+    -- every LTE metric. 5g-watchdog exists for exactly that failure.
+    putval("radio", "nr_attached", serving.nr5g and 1 or 0)
+
+    if status.ca then
+        local carriers = 0
+        if status.ca.pcc then
+            emit_carrier("pcc", status.ca.pcc)
+            carriers = carriers + 1
+        end
+        for i, scc in ipairs(status.ca.scc or {}) do
+            emit_carrier(string.format("scc%d", i - 1), scc)
+            carriers = carriers + 1
+        end
+        putval("radio", "carriers", carriers)
+    end
+
+    return true
+end
+
+if once then
+    os.exit(sample() and 0 or 1)
+end
+
+while running do
+    sample()
+    if not running then break end
+    quectel.utils.sleep(interval)
+end
+
+modem:close()

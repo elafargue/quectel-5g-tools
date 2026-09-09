@@ -106,7 +106,7 @@ cp -r lua/quectel /usr/lib/lua/
 # Install CLI tools (rename `at` to `quectel-at` to avoid colliding
 # with busybox's `at`)
 cp bin/5g-info bin/5g-monitor bin/5g-led-bars bin/5g-watchdog \
-   bin/5g-lock bin/modem-debug /usr/bin/
+   bin/5g-lock bin/modem-debug bin/5g-collectd /usr/bin/
 cp bin/at /usr/bin/quectel-at
 
 # Install Prometheus collectors (optional)
@@ -249,6 +249,79 @@ Tunables in `/etc/config/quectel` under `config led_bars 'led_bars'`:
 |---|---|---|
 | `enabled` | `1` | Master switch — set to `0` to keep the package installed but skip starting the daemon. |
 | `interval` | `10` | Poll interval in seconds. The reads come from the same AT serial port the rest of the toolkit uses, so don't poll faster than `5g-monitor` would. |
+
+### 5g-collectd
+
+Feeds signal metrics to [collectd](https://collectd.org/) through its `exec`
+plugin. On a router whose uplink *is* the thing being measured, this beats a
+Prometheus scrape: collectd writes to local RRD first, so the samples that
+explain a degraded link survive the link degrading. A pull-based scraper
+reaching the router over that same modem has a blind spot during exactly the
+events worth seeing.
+
+```
+LoadPlugin exec
+<Plugin exec>
+    Exec "nobody:nogroup" "/usr/bin/sudo" "/usr/bin/5g-collectd"
+</Plugin>
+```
+
+The `sudo` is not optional. collectd's exec plugin refuses to run a program as
+root — *"Cowardly refusing to exec program as root"* — and `/dev/ttyUSB2` is
+root-owned, so the script has to be launched unprivileged and regain access.
+Grant it narrowly:
+
+```
+# /etc/sudoers.d/5g-collectd
+nobody ALL=(root) NOPASSWD: /usr/bin/5g-collectd
+```
+
+The alternative, if you would rather not involve sudo, is to give the tty a
+group and add the exec user to it.
+
+Check the output by hand before wiring it up — `--once` prints one sample and
+exits:
+
+```bash
+COLLECTD_HOSTNAME=$(uname -n) 5g-collectd --once
+```
+
+```
+PUTVAL router/exec-quectel_lte/gauge-rsrp interval=30 N:-73
+PUTVAL router/exec-quectel_nr5g/gauge-rsrp interval=30 N:-74
+PUTVAL router/exec-quectel_radio/gauge-nr_attached interval=30 N:1
+PUTVAL router/exec-quectel_scc1/gauge-band interval=30 N:8
+...
+```
+
+| | |
+|---|---|
+| `quectel_lte`, `quectel_nr5g` | serving cells: `rsrp`, `rsrq`, `rssi`, `sinr`, `band`, `pci`, `earfcn`/`arfcn`, `frequency_mhz`, bandwidth |
+| `quectel_pcc`, `quectel_scc0`… | one plugin instance per aggregated carrier |
+| `quectel_radio` | `nr_attached` (0/1) and `carriers` (how many are aggregated) |
+
+`nr_attached` is the series worth alerting on. An NSA anchor that loses its NR
+leg still looks healthy on every LTE metric — that failure is what `5g-watchdog`
+exists for, and this makes it visible in a graph.
+
+Three deliberate choices:
+
+- **Carriers are addressed by slot, never by band.** `scc0`, not `scc_n78`. A
+  band in the metric path would mint a new RRD file at every handover and
+  scatter one signal across a dozen stubs. Band is emitted as a *value*, so a
+  handover reads as a step in a graph.
+- **Everything is a `gauge`.** The prettier stock types do not fit: `signal_power`
+  is `U:0`, which rejects a positive SINR, and `signal_quality` is `0:U`, which
+  rejects RSRQ — always negative — as out of range, storing NaN. Worth checking
+  any existing modem collector you have for this: `grep -E '^signal_' /usr/share/collectd/types.db`.
+- **A failed read emits nothing.** collectd draws a gap for a value it never
+  received, which is the truth. A zero or a repeat of the last sample would
+  draw as signal.
+
+Interval comes from `COLLECTD_INTERVAL`, floored at 10s: every read contends
+with `5g-led-bars`, `5g-watchdog` and any interactive `5g-monitor` for the one
+AT port. It uses the same two-command `get_signal_status()` path as the
+Prometheus collector, not the six commands behind `5g-info --json`.
 
 ### 5g-watchdog
 
