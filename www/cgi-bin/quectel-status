@@ -1,15 +1,15 @@
 #!/bin/sh
 # uhttpd CGI: serve the modem status as JSON
 #
-# Install to /www/cgi-bin/quectel-status -- OpenWRT's document root is /www,
-# not /var/www.
+# Install to /www/cgi-bin/quectel-status -- OpenWRT's document root is /www.
 #
-# Stock OpenWRT runs uhttpd, which executes anything under its cgi_prefix and
-# does so as root, so this reaches /dev/ttyUSB2 without the sudo dance
-# collectd's exec plugin needs. GL.iNET 4.x firmware runs nginx for its own
-# web UI instead, and nginx does not execute CGI: dropped into /www/cgi-bin
-# there, this file is served as text or not at all. The README section "When
-# nginx owns port 80" covers running uhttpd alongside on its own port.
+# On a GL-X3000 both web servers run: nginx serves the GL.iNET UI on port 80
+# and does not execute CGI at all, while uhttpd is alongside on another port
+# and does. The port that answers this is uhttpd's. See the README section
+# "Installing it, and finding the port that answers".
+#
+# uhttpd runs CGI as root on OpenWRT, so this reaches /dev/ttyUSB2 without the
+# sudo dance collectd's exec plugin needs.
 #
 # Safe to poll. Every read goes through the shared AT cache in
 # /var/run/quectel-at-cache (15s by default, `cache_ttl` in /etc/config/quectel),
@@ -20,15 +20,45 @@
 # replicated ashore, and no panel needs a permanent device identifier. Drop
 # --no-imei if you want it.
 
+TOOL=/usr/bin/5g-info
+
+# Escape a string for embedding in a JSON value.
+json_escape() {
+    sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/ /g' | tr -d '\r\n'
+}
+
+fail() {
+    printf '{"error":"%s","detail":"%s"}\n' "$1" "$(printf '%s' "$2" | json_escape)"
+    exit 0
+}
+
 printf 'Content-Type: application/json\r\n'
 printf 'Cache-Control: no-store\r\n'
 printf '\r\n'
 
-if ! out=$(/usr/bin/5g-info --json --no-imei 2>/dev/null); then
-    # A failed read must not answer with an empty body that parses as "no
-    # signal". Say what happened, in the same shape the caller expects.
-    printf '{"error":"cannot read modem"}\n'
-    exit 0
+# Distinguish "not installed" from "installed and failed". They are different
+# problems with different fixes, and reporting both as "cannot read modem"
+# sends you to look at the modem when the answer is a missing file. The
+# manual install in the README copies the CLI tools into /usr/bin; running
+# from a git checkout alone does not.
+if [ ! -x "$TOOL" ]; then
+    fail "5g-info not installed" "$TOOL is missing or not executable"
+fi
+
+# stderr is kept, not discarded. A failed read has a reason -- a busy AT port,
+# a missing Lua library, no permission on the tty -- and throwing it away
+# leaves every one of them looking identical from the far end.
+err=$(mktemp 2>/dev/null || echo /tmp/quectel-status.err.$$)
+out=$("$TOOL" --json --no-imei 2>"$err")
+rc=$?
+detail=$(cat "$err" 2>/dev/null); rm -f "$err"
+
+if [ "$rc" -ne 0 ]; then
+    fail "cannot read modem" "${detail:-$TOOL exited $rc with no message}"
+fi
+
+if [ -z "$out" ]; then
+    fail "cannot read modem" "${detail:-$TOOL produced no output}"
 fi
 
 printf '%s\n' "$out"

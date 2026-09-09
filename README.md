@@ -436,9 +436,22 @@ Prometheus collector and every CLI tool talk to the modem directly. It is
 needed only for the live snapshot panels and the Telegraf `http` input.
 
 The IMEI is omitted — this feeds a database that may be replicated off the
-boat, and no panel needs a permanent device identifier. A modem that has
-stopped answering returns `{"error": "cannot read modem"}` rather than an
-empty body that would parse as a cell with no signal.
+boat, and no panel needs a permanent device identifier.
+
+A failure returns an error object rather than an empty body that would parse
+as a cell with no signal, and it says which failure it was:
+
+```json
+{"error":"5g-info not installed","detail":"/usr/bin/5g-info is missing or not executable"}
+{"error":"cannot read modem","detail":"could not open /dev/ttyUSB2: Permission denied"}
+```
+
+The first one is the common surprise. The CGI runs `/usr/bin/5g-info`, and
+running the tools from a git checkout does not put them there — the
+[Manual install](#manual-install) step above is what does. `detail` carries
+whatever the tool wrote to stderr, so a busy AT port, a missing Lua library
+and a permissions problem are told apart instead of all arriving as the same
+sentence.
 
 There is no authentication. On a boat LAN that is usually fine; put it behind
 uhttpd's basic auth if the network is shared.
