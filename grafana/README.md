@@ -158,12 +158,21 @@ The Grafana datasource then wants Query Language = InfluxQL, the database name
 RSRP, RSRQ and SINR colours come from `lua/quectel/thresholds.lua`, so a green
 here means what a green means in `5g-monitor`.
 
-## What it does not query
+## 5g-collectd is not part of this
 
-The series `5g-collectd` feeds through collectd into Telegraf. Telegraf's
-collectd parser derives measurement names from the collectd type rather than
-from anything this repository chooses, so those names depend on the local
-Telegraf config and cannot be written blind. The two sources overlap heavily
-in any case — the split between them is about the AT bus, not about coverage:
-`5g-collectd` is two AT commands and can poll often, the JSON endpoint is six
-and polls rarely.
+Every panel here reads either InfluxDB measurements written by
+[`telegraf/quectel.conf`](../telegraf/quectel.conf) or the router's JSON
+endpoint. Nothing reads what `5g-collectd` produces.
+
+That is deliberate rather than an omission. `5g-collectd` carries a strict
+subset — numbers only, no operator name and no neighbour list, because
+collectd cannot express either — and running both would put two slightly
+different copies of the same signal readings into InfluxDB, sampled moments
+apart, certain to disagree eventually with nothing to say which is right.
+Telegraf also derives collectd measurement names from the collectd type rather
+than from anything this repository chooses, so panels against them cannot be
+written blind in any case.
+
+Pick one path. This one when there is a server running Telegraf; `5g-collectd`
+when the router should keep its own data with no server at all, or to feed
+LuCI's graphs.

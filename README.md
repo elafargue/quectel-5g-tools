@@ -258,11 +258,19 @@ Tunables in `/etc/config/quectel` under `config led_bars 'led_bars'`:
 ### 5g-collectd
 
 Feeds signal metrics to [collectd](https://collectd.org/) through its `exec`
-plugin. On a router whose uplink *is* the thing being measured, this beats a
-Prometheus scrape: collectd writes to local RRD first, so the samples that
-explain a degraded link survive the link degrading. A pull-based scraper
-reaching the router over that same modem has a blind spot during exactly the
-events worth seeing.
+plugin, so the router keeps its own history with no other machine involved.
+That matters when the uplink *is* the thing being measured: collectd writes to
+local RRD first, so the samples explaining a degraded link survive the link
+degrading, and LuCI's graphs can read them without a server at all.
+
+**It is an alternative to the [JSON status endpoint](#json-status-endpoint),
+not a companion to it.** Both report the same radio; running both puts two
+slightly different copies of the same readings into whatever collects them,
+sampled moments apart. `5g-collectd` carries a strict subset — numbers only,
+no operator name and no neighbour list, since collectd has no way to express
+either — so where there is a server running Telegraf, the endpoint is the
+better path, and the Grafana dashboard in `grafana/` queries only that. Use
+`5g-collectd` when the router should stand alone.
 
 ```
 LoadPlugin exec
