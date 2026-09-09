@@ -109,6 +109,11 @@ cp bin/5g-info bin/5g-monitor bin/5g-led-bars bin/5g-watchdog \
    bin/5g-lock bin/modem-debug bin/5g-collectd /usr/bin/
 cp bin/at /usr/bin/quectel-at
 
+# Install the JSON status CGI (optional; see "JSON status endpoint")
+mkdir -p /www/cgi-bin
+cp www/cgi-bin/quectel-status /www/cgi-bin/
+chmod +x /www/cgi-bin/quectel-status
+
 # Install Prometheus collectors (optional)
 cp lua/prometheus-collectors/*.lua /usr/lib/lua/prometheus-collectors/
 
@@ -370,12 +375,64 @@ operator name, serving cells, aggregated carriers and the neighbour list:
 curl http://192.168.8.1/cgi-bin/quectel-status
 ```
 
-uhttpd runs CGI as root on OpenWRT, so it reaches the AT port without the
-sudo that collectd's exec plugin needs. It is safe to poll: every read goes
-through the shared cache in `/var/run/quectel-at-cache` (`cache_ttl` in
-`/etc/config/quectel`, 15s by default), so a dashboard refreshing every few
-seconds and Telegraf polling every minute between them cost the modem one set
-of reads per TTL rather than one per request.
+It is safe to poll: every read goes through the shared cache in
+`/var/run/quectel-at-cache` (`cache_ttl` in `/etc/config/quectel`, 15s by
+default), so a dashboard refreshing every few seconds and Telegraf polling
+every minute between them cost the modem one set of reads per TTL rather than
+one per request.
+
+#### First check what is actually serving port 80
+
+The path is `/www/cgi-bin/` — OpenWRT's document root is `/www`, not
+`/var/www`. The package installs it there; a manual install needs the three
+lines in [Manual install](#manual-install) above.
+
+Installing the file is not enough on its own, though, and this is where GL.iNET
+firmware differs from stock OpenWRT. **Stock OpenWRT** runs uhttpd, which
+executes anything under its `cgi_prefix` and does so as root, so the endpoint
+reaches the AT port with no further work. **GL.iNET 4.x firmware runs nginx**
+for its own web UI, and nginx does not execute CGI at all — a script dropped
+into `/www/cgi-bin` there is served as a text file or not at all. Check which
+you have:
+
+```bash
+pgrep -l 'uhttpd|nginx'
+uci show uhttpd 2>/dev/null | grep -E 'home|cgi_prefix'
+curl -s http://127.0.0.1/cgi-bin/quectel-status | head -c 80
+```
+
+If that last line returns JSON, you are done. If it returns the *contents* of
+the script, or a 404, nginx is serving port 80 and the endpoint needs a home
+of its own — see below.
+
+#### When nginx owns port 80
+
+Two options, in order of preference:
+
+**Run uhttpd alongside, on its own port.** It is a small package and leaves the
+GL.iNET UI untouched:
+
+```bash
+opkg update && opkg install uhttpd
+uci -q delete uhttpd.quectel
+uci set uhttpd.quectel=uhttpd
+uci add_list uhttpd.quectel.listen_http='0.0.0.0:8080'
+uci set uhttpd.quectel.home='/www'
+uci set uhttpd.quectel.cgi_prefix='/cgi-bin'
+uci commit uhttpd
+/etc/init.d/uhttpd restart
+curl -s http://127.0.0.1:8080/cgi-bin/quectel-status | head -c 80
+```
+
+Then point Telegraf and the dashboard at `:8080` rather than `:80`.
+
+**Or add a location to nginx** with `fcgiwrap`, if you would rather not run a
+second daemon. That means editing GL.iNET's nginx config, which a firmware
+upgrade will overwrite — worth knowing before choosing it.
+
+Nothing else in this repo depends on the endpoint: `5g-collectd`, the
+Prometheus collector and every CLI tool talk to the modem directly. It is
+needed only for the live snapshot panels and the Telegraf `http` input.
 
 The IMEI is omitted — this feeds a database that may be replicated off the
 boat, and no panel needs a permanent device identifier. A modem that has

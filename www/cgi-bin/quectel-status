@@ -1,9 +1,15 @@
 #!/bin/sh
 # uhttpd CGI: serve the modem status as JSON
 #
-# Install to /www/cgi-bin/quectel-status. uhttpd runs CGI as root on OpenWRT,
-# so this reaches /dev/ttyUSB2 without the sudo dance collectd's exec plugin
-# needs.
+# Install to /www/cgi-bin/quectel-status -- OpenWRT's document root is /www,
+# not /var/www.
+#
+# Stock OpenWRT runs uhttpd, which executes anything under its cgi_prefix and
+# does so as root, so this reaches /dev/ttyUSB2 without the sudo dance
+# collectd's exec plugin needs. GL.iNET 4.x firmware runs nginx for its own
+# web UI instead, and nginx does not execute CGI: dropped into /www/cgi-bin
+# there, this file is served as text or not at all. The README section "When
+# nginx owns port 80" covers running uhttpd alongside on its own port.
 #
 # Safe to poll. Every read goes through the shared AT cache in
 # /var/run/quectel-at-cache (15s by default, `cache_ttl` in /etc/config/quectel),
