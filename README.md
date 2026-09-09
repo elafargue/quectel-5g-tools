@@ -381,11 +381,28 @@ default), so a dashboard refreshing every few seconds and Telegraf polling
 every minute between them cost the modem one set of reads per TTL rather than
 one per request.
 
-#### First check what is actually serving port 80
+#### Where the CGI directory is, and whether it survives a reboot
 
-The path is `/www/cgi-bin/` — OpenWRT's document root is `/www`, not
-`/var/www`. The package installs it there; a manual install needs the three
-lines in [Manual install](#manual-install) above.
+The path varies by firmware. Stock OpenWRT serves `/www`; some GL.iNET builds
+serve `/var/www`. Find the one your box actually uses:
+
+```bash
+uci -q get uhttpd.main.home; ls -d /www/cgi-bin /var/www/cgi-bin 2>/dev/null
+```
+
+**If it is `/var/www`, check whether it is volatile before relying on it.** On
+OpenWRT `/var` is a symlink to `/tmp`, which is tmpfs — anything copied there
+is gone at the next reboot, and the endpoint simply stops existing with
+nothing to say why:
+
+```bash
+ls -ld /var                     # "/var -> /tmp" means volatile
+```
+
+If it is volatile, install to the persistent root as well and let whatever
+populates `/var/www` at boot carry it across; or, if nothing does, add a
+`uci-defaults` script or an init script that copies it on each boot. The
+package installs to `/www`, which is persistent on stock OpenWRT.
 
 Installing the file is not enough on its own, though, and this is where GL.iNET
 firmware differs from stock OpenWRT. **Stock OpenWRT** runs uhttpd, which
