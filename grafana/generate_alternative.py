@@ -59,6 +59,53 @@ SINR_STEPS = [("red", None), ("orange", 0), ("yellow", 13), ("green", 20)]
 
 
 # ---------------------------------------------------------------------------
+# glossary
+# ---------------------------------------------------------------------------
+#
+# Panel descriptions render as markdown behind the small "i" in a panel's
+# corner. They are written for the person reading the dashboard rather than
+# the person who built it, so they expand the acronym before using it:
+# somebody turning an antenna by what the screen says should not have to know
+# what RSRQ stands for to know whether the number in front of them is bad.
+#
+# The three signal metrics are defined once and composed into every panel that
+# shows them, so the explanation of RSRP cannot drift between the live stat and
+# the history graph. The thresholds quoted are RSRP_STEPS / RSRQ_STEPS /
+# SINR_STEPS above -- change those and these sentences become wrong, which is
+# the one coupling here worth remembering.
+
+RSRP_DOC = (
+    "**RSRP** is raw signal strength, in dBm: how much of the tower's signal "
+    "reaches the antenna. It is always negative and closer to zero is "
+    "stronger -- green from -80, red below -100."
+)
+
+SINR_DOC = (
+    "**SINR** is signal *quality*, in dB: how far the wanted signal stands "
+    "above noise and interference. This is the one that predicts speed -- "
+    "green from 20, red below 0, where the link struggles however healthy "
+    "RSRP looks."
+)
+
+RSRQ_DOC = (
+    "**RSRQ** is quality in dB adjusted for how busy the cell is. It sags "
+    "when the tower is congested while RSRP holds steady, so a fall here "
+    "with no fall in strength usually means other users rather than worse "
+    "aim. Green from -10, red below -15."
+)
+
+LIVE_DOC = (
+    "Read live from the router each time the dashboard refreshes, and stored "
+    "nowhere -- this is *now*, not the last scrape."
+)
+
+GAPS_DOC = (
+    "Gaps are polls where nothing was reported, drawn as a break rather than "
+    "as a zero -- a reading nobody took is not a reading of zero."
+)
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
@@ -141,7 +188,7 @@ def row(title: str, y: int, collapsed: bool = False) -> dict:
 
 def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
          text_mode="value", no_value="—", decimals=None,
-         string_value=False) -> dict:
+         string_value=False, description="") -> dict:
     """string_value picks up a text field rather than a number.
 
     reduceOptions.fields defaults to "", which Grafana reads as *numeric
@@ -167,6 +214,7 @@ def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
     return {
         "type": "stat",
         "title": title,
+        "description": description,
         "gridPos": gridpos,
         "datasource": ds,
         "targets": targets,
@@ -184,10 +232,12 @@ def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
     }
 
 
-def table(title, gridpos, targets, ds, overrides=None, transformations=None) -> dict:
+def table(title, gridpos, targets, ds, overrides=None, transformations=None,
+          description="") -> dict:
     return {
         "type": "table",
         "title": title,
+        "description": description,
         "gridPos": gridpos,
         "datasource": ds,
         "targets": targets,
@@ -209,7 +259,7 @@ def table(title, gridpos, targets, ds, overrides=None, transformations=None) -> 
 
 
 def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
-               fill=10, min_=None, max_=None) -> dict:
+               fill=10, min_=None, max_=None, description="") -> dict:
     field: dict = {
         "custom": {
             "drawStyle": "line",
@@ -242,6 +292,7 @@ def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
     return {
         "type": "timeseries",
         "title": title,
+        "description": description,
         "gridPos": gridpos,
         "datasource": ds,
         "targets": targets,
@@ -255,10 +306,12 @@ def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
     }
 
 
-def state_timeline(title, gridpos, targets, ds, thresholds=None) -> dict:
+def state_timeline(title, gridpos, targets, ds, thresholds=None,
+                   description="") -> dict:
     return {
         "type": "state-timeline",
         "title": title,
+        "description": description,
         "gridPos": gridpos,
         "datasource": ds,
         "targets": targets,
@@ -308,39 +361,71 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
         "Network", gp(0, 1, 4, 4),
         [inf(fu, "A", url, "operator", [col("operator", "Operator")])],
         infinity(fu), text_mode="value", no_value="no service",
-        string_value=True))
+        string_value=True,
+        description=(
+            "The mobile network the modem is registered with. " + LIVE_DOC +
+            "\n\nReads *no service* when the modem is not registered at all "
+            "-- searching, out of coverage, or no usable SIM.")))
 
     panels.append(stat(
         "Mode", gp(4, 1, 3, 4),
         [inf(fu, "A", url, "serving", [col("mode", "Mode")])],
-        infinity(fu), no_value="—", string_value=True))
+        infinity(fu), no_value="—", string_value=True,
+        description=(
+            "How 5G is attached. `NSA` (non-standalone) is 5G carried on top "
+            "of an LTE anchor and is the usual case; `SA` is standalone 5G "
+            "with no LTE underneath.\n\nA dash means there is no 5G leg at "
+            "all and the modem is on LTE alone -- the same condition the NR "
+            "panels show as *no NR*.")))
 
     panels.append(stat(
         "RRC", gp(7, 1, 3, 4),
         [inf(fu, "A", url, "serving", [col("state", "State")])],
-        infinity(fu), no_value="—", string_value=True))
+        infinity(fu), no_value="—", string_value=True,
+        description=(
+            "The radio connection state the modem reports: `CONNECT` while a "
+            "link is actively carrying data, `NOCONN` when it is camped on a "
+            "cell with nothing to send, `SEARCH` while looking for one, "
+            "`LIMSRV` for limited service (emergency calls only).\n\n"
+            "`NOCONN` is **not** a fault. An idle link sits there most of the "
+            "time; it says nothing about signal quality.")))
 
     # The two numbers you actually steer by. Thresholds are the ones
     # 5g-monitor colours its output with, so a green here is a green there.
     panels.append(stat(
         "NR RSRP", gp(10, 1, 4, 4),
         [inf(fu, "A", url, "serving.nr5g", [col("rsrp", "RSRP", "number")])],
-        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="no NR"))
+        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="no NR",
+        description=(
+            RSRP_DOC + "\n\nThis is the 5G carrier. Reads *no NR* whenever "
+            "the 5G leg is detached and the modem is running on LTE alone.\n\n"
+            + LIVE_DOC)))
 
     panels.append(stat(
         "NR SINR", gp(14, 1, 4, 4),
         [inf(fu, "A", url, "serving.nr5g", [col("sinr", "SINR", "number")])],
-        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="no NR"))
+        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="no NR",
+        description=(
+            SINR_DOC + "\n\nThis is the 5G carrier, and it is the value to "
+            "aim a directional antenna by -- the one `5g-monitor` turns into "
+            "beeps so you can point without watching a screen.\n\n"
+            + LIVE_DOC)))
 
     panels.append(stat(
         "LTE RSRP", gp(18, 1, 3, 4),
         [inf(fu, "A", url, "serving.lte", [col("rsrp", "RSRP", "number")])],
-        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="—"))
+        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="—",
+        description=(
+            RSRP_DOC + "\n\nThis is the 4G carrier. In NSA mode it is also "
+            "the anchor the 5G leg is bolted to, so it is worth watching even "
+            "when 5G is doing the work: lose the anchor and the 5G goes with "
+            "it.\n\n" + LIVE_DOC)))
 
     panels.append(stat(
         "LTE SINR", gp(21, 1, 3, 4),
         [inf(fu, "A", url, "serving.lte", [col("sinr", "SINR", "number")])],
-        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="—"))
+        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="—",
+        description=SINR_DOC + "\n\nThis is the 4G carrier.\n\n" + LIVE_DOC))
 
     # The aggregated carriers, which is what 5g-info prints as its CA table.
     # Two targets because the primary is an object and the secondaries an
@@ -367,7 +452,22 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             _width("BW", 60),
             _colour_override("RSRP", RSRP_STEPS, "dBm", 80),
             _colour_override("SINR", SINR_STEPS, "dB", 70),
-        ]))
+        ],
+        description=(
+            "Every carrier the modem is using at once. Mobile networks bond "
+            "several channels together (carrier aggregation) to go faster, so "
+            "**more rows here generally means more throughput** -- this is "
+            "often what explains a speed change the signal numbers do not."
+            "\n\n"
+            "- **Role** -- `pcc` is the primary carrier, `scc` a secondary "
+            "added on top.\n"
+            "- **Band** -- the block of spectrum. Low bands (LTE 20, 5G n28) "
+            "travel far and pass through obstacles; high ones (LTE 7, n78) "
+            "are much faster but shorter-ranged.\n"
+            "- **PCI** -- identifies which cell of that band, out of 504 "
+            "possible codes. A change of PCI is a change of cell.\n"
+            "- **MHz / BW** -- centre frequency and channel width. Wider is "
+            "faster.\n\n" + LIVE_DOC)))
 
     # Neighbours: live only. Storing them is what would grow the index without
     # bound, so this panel is the reason the endpoint exists.
@@ -389,7 +489,21 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             _width("PCI", 60),
             _colour_override("RSRP", RSRP_STEPS, "dBm", 85),
             _colour_override("RSRQ", RSRQ_STEPS, "dB", 80),
-        ]))
+        ],
+        description=(
+            "Other cells the modem can hear but is **not** using, strongest "
+            "first. These are the candidates it would hand over to, so the "
+            "list is a measure of how much company you have: a healthy list "
+            "means somewhere to go if the serving cell fades, and a list "
+            "thinning towards empty is the first sign of running out of "
+            "coverage.\n\n"
+            "- **Scope** -- `intra` is a neighbour on the same frequency as "
+            "the serving cell, `inter` one on a different frequency.\n"
+            "- **ARFCN** -- the channel number the cell transmits on.\n"
+            "- **PCI** -- identifies the cell within that channel.\n\n"
+            + LIVE_DOC + " The history of this list is summarised by "
+            "*Neighbours reported* below; the rows themselves are never "
+            "kept.")))
 
     # -- Signal history -----------------------------------------------------
     panels.append(row("Signal history", 14))
@@ -402,7 +516,11 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
          iql(iu, "B",
              'SELECT mean("rsrp") FROM "quectel_lte" WHERE $timeFilter '
              'GROUP BY time($__interval), "band" fill(none)', "LTE B$tag_band")],
-        influx(iu), unit="dBm", thresholds=RSRP_STEPS))
+        influx(iu), unit="dBm", thresholds=RSRP_STEPS,
+        description=(
+            RSRP_DOC + "\n\nOne line per band, so a handover onto different "
+            "spectrum shows as one line stopping and another starting rather "
+            "than as a jump in a single line. " + GAPS_DOC)))
 
     panels.append(timeseries(
         "SINR", gp(12, 15, 12, 8),
@@ -412,7 +530,13 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
          iql(iu, "B",
              'SELECT mean("sinr") FROM "quectel_lte" WHERE $timeFilter '
              'GROUP BY time($__interval), "band" fill(none)', "LTE B$tag_band")],
-        influx(iu), unit="dB", thresholds=SINR_STEPS))
+        influx(iu), unit="dB", thresholds=SINR_STEPS,
+        description=(
+            SINR_DOC + "\n\nWorth reading against RSRP to its left: **"
+            "strength holding steady while quality falls is interference, "
+            "not a pointing problem**, and no amount of turning the antenna "
+            "will fix it. Both falling together is a coverage or aim "
+            "problem. " + GAPS_DOC)))
 
     panels.append(timeseries(
         "RSRQ", gp(0, 23, 12, 6),
@@ -422,7 +546,8 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
          iql(iu, "B",
              'SELECT mean("rsrq") FROM "quectel_lte" WHERE $timeFilter '
              'GROUP BY time($__interval) fill(none)', "LTE")],
-        influx(iu), unit="dB", thresholds=RSRQ_STEPS))
+        influx(iu), unit="dB", thresholds=RSRQ_STEPS,
+        description=RSRQ_DOC + "\n\n" + GAPS_DOC))
 
     # What was carrying traffic, as blocks rather than as numbers on an axis:
     # a handover reads as a change of block, and losing a carrier as a row
@@ -446,7 +571,32 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
              '"quectel_carrier_scc" WHERE $timeFilter '
              'GROUP BY time($__interval), "role", "rat", "band" fill(none)',
              "$tag_role $tag_rat $tag_band")],
-        influx(iu), thresholds=RSRP_STEPS))
+        influx(iu), thresholds=RSRP_STEPS,
+        description=(
+            "Which carriers were actually in use over time, as blocks rather "
+            "than lines. Each row is one carrier and its colour is that "
+            "carrier's RSRP on the usual scale, so a row that turns red was "
+            "still in use but weak.\n\n"
+            "**Row labels read \"role technology band\".** `pcc lte 3` is the "
+            "primary carrier on LTE band 3; `scc 5g 78` a secondary on 5G "
+            "n78. Role is part of the label because intra-band aggregation is "
+            "ordinary -- two carriers can sit on the same band at once, and "
+            "without the role there would be nothing to tell them apart."
+            "\n\n"
+            "**The number inside each block is that carrier's RSRP in dBm** "
+            "-- signal strength, always negative, closer to zero is stronger, "
+            "green from -80 and red below -100 like everywhere else here. It "
+            "is not a count, a band number or an id. The unit is left off so "
+            "that narrow blocks stay readable, and Grafana drops the number "
+            "altogether when a block is too narrow to fit it; the colour "
+            "carries the same reading either way.\n\n"
+            "**A row that stops is a carrier that was dropped; a row that "
+            "starts is one that was added.** That is the quickest read of a "
+            "handover or of the 5G leg detaching.\n\n"
+            "Rows are every carrier seen anywhere in the selected time range, "
+            "not the ones up right now, so widening the range adds rows for "
+            "carriers long since left behind. *Connected carriers* at the top "
+            "of the dashboard is where \"right now\" lives.")))
 
     # -- Where we were ------------------------------------------------------
     panels.append(row("Cells and coverage", 29))
@@ -463,7 +613,15 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
         [iql(iu, "A",
              'SELECT last("enodeb") FROM "quectel_lte" WHERE $timeFilter '
              'GROUP BY time($__interval) fill(previous)', "eNodeB")],
-        influx(iu), fill=0))
+        influx(iu), fill=0,
+        description=(
+            "Which LTE base station is serving the modem, as its numeric "
+            "identity (the eNodeB id, shared by all cells on one mast).\n\n"
+            "**The value on the axis means nothing as a quantity -- read the "
+            "steps, not the height.** Each step is a handover to a different "
+            "site. A flat line is a link sitting still on one mast; frequent "
+            "steps mean the vessel is moving between them, and a step that "
+            "coincides with a dip in RSRP above is a handover you felt.")))
 
     # How much company the serving cell has. A thinning neighbour list is the
     # early sign of running out of coverage, and it moves before RSRP does.
@@ -490,7 +648,21 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
              'WHERE $timeFilter GROUP BY time($__interval), "scope" '
              'fill(none)',
              "$tag_scope")],
-        influx(su), fill=30))
+        influx(su), fill=30,
+        description=(
+            "How many neighbouring cells the modem could hear at each poll, "
+            "split into `intra` (same frequency as the serving cell) and "
+            "`inter` (a different one). The cells themselves are listed in "
+            "*Neighbour cells* at the top of the dashboard.\n\n"
+            "**A thinning count is an early warning of running out of "
+            "coverage, and it usually moves before RSRP does** -- you lose "
+            "the alternatives before you lose the cell you are on.\n\n"
+            "Gaps are polls that returned no sample, drawn as a break rather "
+            "than as zero: no neighbours reported and no reading taken are "
+            "different things.\n\n"
+            "Kept for 24 hours only -- neighbour lists churn constantly on a "
+            "moving vessel, so they live in a short-retention bucket of their "
+            "own. Ranges longer than a day will look empty here.")))
 
     # count() over a field, never distinct() over a tag. `band` is a tag here,
     # and InfluxQL's distinct() does not operate on tags -- it answers with no
@@ -504,7 +676,15 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
              '"quectel_carrier_scc" WHERE $timeFilter '
              'GROUP BY time($__interval), "rat" fill(none)',
              "$tag_rat")],
-        influx(iu), fill=30, min_=0))
+        influx(iu), fill=30, min_=0,
+        description=(
+            "How many carriers were bonded together at each poll, split by "
+            "technology. This is the count behind the *Connected carriers* "
+            "table at the top.\n\n"
+            "More carriers means more spectrum in use and, broadly, more "
+            "speed, so **a drop here often explains a slowdown that the "
+            "signal panels do not** -- the network can withdraw a carrier "
+            "under load while every dB stays exactly where it was.")))
 
     # Frequency rather than band number: on a boat the interesting question is
     # usually whether it fell back to low band, and megahertz answers that
@@ -518,7 +698,18 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
              "$tag_rat $tag_band")],
         # Grafana has no megahertz unit and "hertz" would label 1840 MHz as
         # 1840 Hz. A custom suffix is the honest option.
-        influx(iu), unit="suffix:MHz"))
+        influx(iu), unit="suffix:MHz",
+        description=(
+            "The centre frequency of each carrier in use. Shown as megahertz "
+            "rather than as a band number because the useful question at sea "
+            "is usually *did it fall back to low band*, and that is easier to "
+            "see on an axis than to remember band by band.\n\n"
+            "Roughly: **below 1000 MHz** travels a long way and passes "
+            "through obstacles but is slow; **1800-2600 MHz** is the middle "
+            "ground; **3400-3800 MHz** (n78) is the fastest and the shortest-"
+            "ranged. A line dropping to the bottom of the chart is the modem "
+            "trading speed for reach, which is usually the right call and "
+            "always worth knowing about.")))
 
     return panels
 
@@ -625,8 +816,13 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
     dash: dict = {
         "title": "Quectel 5G — Alternative (InfluxQL + live)",
         "description": (
-            "Live radio snapshot read from the router plus signal history from "
-            "InfluxDB. Generated by "
+            "Live radio snapshot read from the router plus signal history "
+            "from InfluxDB. Every panel carries an explanation behind the "
+            "small \"i\" in its top-left corner -- hover it if a number or "
+            "an acronym is unfamiliar. In short: RSRP is how strong the "
+            "signal is, SINR is how clean it is and is the one that "
+            "predicts speed, and the number of carriers is how much spectrum "
+            "is in use. Generated by "
             "quectel-5g-tools/grafana/generate_alternative.py."
         ),
         "uid": "quectel-5g-alternative",
