@@ -267,6 +267,36 @@ for p in d.get("dashboard", {}).get("panels", []):
     || check 0 "the neighbour panel queries the short-retention datasource" \
              "got '${nbr_ds:-nothing}', wanted 'quectel-influx-short'"
 
+# Carrier frequency must plot frequencies that carriers actually use. Grouped
+# by fewer tags than identify a carrier, mean() blends two secondaries on one
+# band into a frequency nothing transmits on -- 1820 and 1870 MHz became 1850
+# and 1851.7 on this stack. Grouped by arfcn, each series is one channel and
+# its value never varies. The panel's own query is run, with its macros
+# filled in, so a regrouping of the panel is what gets caught.
+#
+# Series with an empty arfcn are points from before the tag existed and are
+# skipped; a series with no arfcn key at all means the panel stopped grouping
+# by it, and is checked -- that is the regression.
+freqq=$(printf '%s' "$dash" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: sys.exit(0)
+for p in d.get("panels",[]):
+    if p.get("title")=="Carrier frequency": print(p["targets"][0]["query"])' \
+    | sed -e 's/\$timeFilter/time > now() - 30m/' -e 's/\$__interval/1m/')
+blend=$( [ -n "$freqq" ] && iql systemhealth "$freqq" | python3 -c 'import json,sys
+n=0
+for r in json.load(sys.stdin).get("results",[]):
+    for s in r.get("series",[]):
+        if s.get("tags",{}).get("arfcn","absent")=="": continue
+        n+=1
+        v={round(x[1],1) for x in s["values"] if x[1] is not None}
+        if len(v)>1: print("%s %s" % (json.dumps(s.get("tags")), sorted(v)))
+if n==0: print("no series to check")' 2>/dev/null)
+[ -n "$freqq" ] && [ -z "$blend" ] \
+    && check 1 "Carrier frequency plots only frequencies a carrier uses" \
+    || check 0 "Carrier frequency plots only frequencies a carrier uses" \
+             "${blend:-panel query not found}"
+
 # The Now row, asked the way the browser asks it: the provisioned panels'
 # own queries, through Grafana. Network, Mode and RRC are present on every
 # poll the router answers -- 3G included -- so each must return a value

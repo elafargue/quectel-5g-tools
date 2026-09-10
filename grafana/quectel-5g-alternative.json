@@ -1429,7 +1429,7 @@
     {
       "type": "state-timeline",
       "title": "Carriers in use",
-      "description": "Which carriers were actually in use over time, as blocks rather than lines. Each row is one carrier and its colour is that carrier's RSRP on the usual scale, so a row that turns red was still in use but weak.\n\n**Row labels read \"role technology band\".** `pcc lte 3` is the primary carrier on LTE band 3; `scc 5g 78` a secondary on 5G n78. Role is part of the label because intra-band aggregation is ordinary -- two carriers can sit on the same band at once, and without the role there would be nothing to tell them apart.\n\n**The number inside each block is that carrier's RSRP in dBm** -- signal strength, always negative, closer to zero is stronger, green from -80 and red below -100 like everywhere else here. It is not a count, a band number or an id. The unit is left off so that narrow blocks stay readable, and Grafana drops the number altogether when a block is too narrow to fit it; the colour carries the same reading either way.\n\n**A row that stops is a carrier that was dropped; a row that starts is one that was added.** That is the quickest read of a handover or of the 5G leg detaching.\n\nRows are every carrier seen anywhere in the selected time range, not the ones up right now, so widening the range adds rows for carriers long since left behind. *Connected carriers* at the top of the dashboard is where \"right now\" lives.",
+      "description": "Which carriers were actually in use over time, as blocks rather than lines. Each row is one carrier and its colour is that carrier's RSRP on the usual scale, so a row that turns red was still in use but weak.\n\n**Row labels read \"role technology band channel\".** `pcc lte 3 1550` is the primary carrier on LTE band 3, channel (EARFCN) 1550; `scc 5g 78 636672` a secondary on 5G n78. Role and channel are both there because intra-band aggregation is ordinary -- two or three carriers can sit on one band at once, and the channel is what tells two secondaries apart. Rows from before an install began recording the channel show it blank.\n\n**The number inside each block is that carrier's RSRP in dBm** -- signal strength, always negative, closer to zero is stronger, green from -80 and red below -100 like everywhere else here. It is not a count, a band number or an id. The unit is left off so that narrow blocks stay readable, and Grafana drops the number altogether when a block is too narrow to fit it; the colour carries the same reading either way.\n\n**A row that stops is a carrier that was dropped; a row that starts is one that was added.** That is the quickest read of a handover or of the 5G leg detaching.\n\nRows are every carrier seen anywhere in the selected time range, not the ones up right now, so widening the range adds rows for carriers long since left behind. *Connected carriers* at the top of the dashboard is where \"right now\" lives.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1447,10 +1447,10 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"role\", \"rat\", \"band\" fill(none)",
+          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"role\", \"rat\", \"band\", \"arfcn\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
-          "alias": "$tag_role $tag_rat $tag_band"
+          "alias": "$tag_role $tag_rat $tag_band $tag_arfcn"
         }
       ],
       "fieldConfig": {
@@ -1804,7 +1804,7 @@
     {
       "type": "timeseries",
       "title": "Carrier frequency",
-      "description": "The centre frequency of each carrier in use. Shown as megahertz rather than as a band number because the useful question at sea is usually *did it fall back to low band*, and that is easier to see on an axis than to remember band by band.\n\nRoughly: **below 1000 MHz** travels a long way and passes through obstacles but is slow; **1800-2600 MHz** is the middle ground; **3400-3800 MHz** (n78) is the fastest and the shortest-ranged. A line dropping to the bottom of the chart is the modem trading speed for reach, which is usually the right call and always worth knowing about.",
+      "description": "The centre frequency of each carrier in use, one line per channel, labelled technology, band and channel number. Shown as megahertz rather than as a band number because the useful question at sea is usually *did it fall back to low band*, and that is easier to see on an axis than to remember band by band.\n\nRoughly: **below 1000 MHz** travels a long way and passes through obstacles but is slow; **1800-2600 MHz** is the middle ground; **3400-3800 MHz** (n78) is the fastest and the shortest-ranged. A line dropping to the bottom of the chart is the modem trading speed for reach, which is usually the right call and always worth knowing about.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1822,10 +1822,10 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\" fill(none)",
+          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\", \"arfcn\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
-          "alias": "$tag_rat $tag_band"
+          "alias": "$tag_rat $tag_band $tag_arfcn"
         }
       ],
       "fieldConfig": {

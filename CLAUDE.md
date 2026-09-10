@@ -333,6 +333,16 @@ the fix -- the router sent B3 at 1350 and 1850 every poll, InfluxDB stored
 1850 alone. It is still deliberately not a tag on `quectel_lte`, which has one
 row per poll and nothing to collide with.
 
+The history panels that plot carriers — *Carriers in use*, *Carrier
+frequency* — group by `arfcn` too, and must. Grouped by fewer tags than
+identify a carrier, `mean()` averages whatever shares a series: two
+secondaries on one band (1820 and 1870 MHz plotted as 1845), and, even
+before the tag, any bucket spanning a roam or handover between channels on
+one band (KT's and TIM's n78 plotted as 3586 and 3671). Those are
+frequencies nothing transmits on. `docker/verify.sh` runs the panel's own
+query and fails if any channel's series holds more than one frequency; it
+was checked to fail on the old grouping.
+
 ## Neighbour rows are chosen, not just printed
 
 `print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`

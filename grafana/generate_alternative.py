@@ -618,6 +618,10 @@ def build_panels(iu: str, su: str, window: str) -> list:
     # just in the GROUP BY: the alias replaces the series name outright, so a
     # tag missing from it is invisible however the query grouped.
     #
+    # And arfcn, once it became a tag: two *secondaries* on one band share
+    # role as well, so without it their points land in one series and last()
+    # keeps one of them -- one row where the carriers table above shows two.
+    #
     # Rows are every carrier seen anywhere in the window, not the ones up
     # right now, so widening the time range adds rows for carriers long since
     # left behind. That is the intent for a history panel -- the top row is
@@ -627,19 +631,22 @@ def build_panels(iu: str, su: str, window: str) -> list:
         [iql(iu, "A",
              'SELECT last("rsrp") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
-             'GROUP BY time($__interval), "role", "rat", "band" fill(none)',
-             "$tag_role $tag_rat $tag_band")],
+             'GROUP BY time($__interval), "role", "rat", "band", "arfcn" '
+             'fill(none)',
+             "$tag_role $tag_rat $tag_band $tag_arfcn")],
         influx(iu), thresholds=RSRP_STEPS,
         description=(
             "Which carriers were actually in use over time, as blocks rather "
             "than lines. Each row is one carrier and its colour is that "
             "carrier's RSRP on the usual scale, so a row that turns red was "
             "still in use but weak.\n\n"
-            "**Row labels read \"role technology band\".** `pcc lte 3` is the "
-            "primary carrier on LTE band 3; `scc 5g 78` a secondary on 5G "
-            "n78. Role is part of the label because intra-band aggregation is "
-            "ordinary -- two carriers can sit on the same band at once, and "
-            "without the role there would be nothing to tell them apart."
+            "**Row labels read \"role technology band channel\".** "
+            "`pcc lte 3 1550` is the primary carrier on LTE band 3, channel "
+            "(EARFCN) 1550; `scc 5g 78 636672` a secondary on 5G n78. Role and "
+            "channel are both there because intra-band aggregation is "
+            "ordinary -- two or three carriers can sit on one band at once, "
+            "and the channel is what tells two secondaries apart. Rows from "
+            "before an install began recording the channel show it blank."
             "\n\n"
             "**The number inside each block is that carrier's RSRP in dBm** "
             "-- signal strength, always negative, closer to zero is stronger, "
@@ -747,18 +754,27 @@ def build_panels(iu: str, su: str, window: str) -> list:
     # Frequency rather than band number: on a boat the interesting question is
     # usually whether it fell back to low band, and megahertz answers that
     # without having to remember which band is which.
+    #
+    # Grouped by arfcn, and it has to be. Grouped by fewer tags than identify
+    # a carrier, mean() blends two secondaries on one band: 1820 and 1870 MHz
+    # plotted as 1850 and 1851.7 on the dev stack -- frequencies nothing
+    # transmits on. Before arfcn was a tag one of the pair was simply lost;
+    # after, a coarser grouping averages them. One channel per series, the
+    # value is constant and mean() is exact. docker/verify.sh holds this.
     panels.append(timeseries(
         "Carrier frequency", gp(12, 36, 12, 6),
         [iql(iu, "A",
              'SELECT mean("frequency_mhz") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
-             'GROUP BY time($__interval), "rat", "band" fill(none)',
-             "$tag_rat $tag_band")],
+             'GROUP BY time($__interval), "rat", "band", "arfcn" '
+             'fill(none)',
+             "$tag_rat $tag_band $tag_arfcn")],
         # Grafana has no megahertz unit and "hertz" would label 1840 MHz as
         # 1840 Hz. A custom suffix is the honest option.
         influx(iu), unit="suffix:MHz",
         description=(
-            "The centre frequency of each carrier in use. Shown as megahertz "
+            "The centre frequency of each carrier in use, one line per "
+            "channel, labelled technology, band and channel number. Shown as megahertz "
             "rather than as a band number because the useful question at sea "
             "is usually *did it fall back to low band*, and that is easier to "
             "see on an axis than to remember band by band.\n\n"
