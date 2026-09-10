@@ -2091,7 +2091,7 @@
     {
       "name": "DS_INFLUXDB",
       "label": "InfluxDB",
-      "description": "InfluxDB, queried with InfluxQL",
+      "description": "Select the InfluxDB datasource on database systemhealth",
       "type": "datasource",
       "pluginId": "influxdb",
       "pluginName": "InfluxDB"
@@ -2099,7 +2099,7 @@
     {
       "name": "DS_INFLUXDB_SHORT",
       "label": "InfluxDB (short)",
-      "description": "InfluxDB database holding the short-retention neighbour bucket",
+      "description": "Select the OTHER InfluxDB datasource, the one on database systemhealth_short -- not the main one",
       "type": "datasource",
       "pluginId": "influxdb",
       "pluginName": "InfluxDB"
@@ -2107,7 +2107,7 @@
     {
       "name": "DS_INFINITY",
       "label": "Infinity",
-      "description": "Infinity, for the live status endpoint",
+      "description": "Select the Infinity datasource that reads the router's status endpoint",
       "type": "datasource",
       "pluginId": "yesoreyeram-infinity-datasource",
       "pluginName": "Infinity"

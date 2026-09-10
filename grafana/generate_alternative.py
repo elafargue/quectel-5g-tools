@@ -886,23 +886,40 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
     # that was bound needs no entry. Binding some and being asked for the
     # rest is a legitimate thing to want, and either way no ${...} can now
     # reach a dashboard without an __inputs entry that resolves it.
+    # The description doubles as the picker's *placeholder* on the import
+    # page -- Grafana's processInputs assigns it to inputModel.info, which
+    # DataSourcePicker renders as placeholder text. A noun phrase there
+    # ("InfluxDB, queried with InfluxQL") sits in the box looking exactly like
+    # a value that has already been chosen, on a form whose pickers all start
+    # empty. Phrased as an instruction it cannot be mistaken for one.
+    #
+    # Grafana 11.6 refuses to submit with any picker unselected ("A data
+    # source is required" under all three, verified), so a misread costs only
+    # a moment there. It is not known that every version enforces that, and
+    # an unresolved ${...} falls back to the *default* datasource silently --
+    # which for the main input is usually right by accident and for the
+    # short-retention one is exactly the mis-wiring this dashboard cannot
+    # afford.
     declared = [
         spec for uid, spec in (
             (influx_uid,
              {"name": "DS_INFLUXDB", "label": INFLUX_PLUGIN_NAME,
-              "description": "InfluxDB, queried with InfluxQL",
+              "description": "Select the InfluxDB datasource on database "
+                             "systemhealth",
               "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
               "pluginName": INFLUX_PLUGIN_NAME}),
             (short_uid,
              {"name": "DS_INFLUXDB_SHORT",
               "label": INFLUX_PLUGIN_NAME + " (short)",
-              "description": "InfluxDB database holding the short-retention "
-                             "neighbour bucket",
+              "description": "Select the OTHER InfluxDB datasource, the one "
+                             "on database systemhealth_short -- not the main "
+                             "one",
               "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
               "pluginName": INFLUX_PLUGIN_NAME}),
             (infinity_uid,
              {"name": "DS_INFINITY", "label": INFINITY_PLUGIN_NAME,
-              "description": "Infinity, for the live status endpoint",
+              "description": "Select the Infinity datasource that reads "
+                             "the router's status endpoint",
               "type": "datasource", "pluginId": INFINITY_PLUGIN_ID,
               "pluginName": INFINITY_PLUGIN_NAME}),
         ) if uid == "${" + spec["name"] + "}"
