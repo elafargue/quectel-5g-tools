@@ -87,7 +87,7 @@ Template variables:
 - `$target` — `label_values(ping_average_response_ms, url)`.
 
 
-# Alternative dashboard: InfluxQL + live snapshot
+# Alternative dashboard: InfluxQL history and latest poll
 
 `generate_alternative.py` builds a second, unrelated dashboard
 (`quectel-5g-alternative.json`, uid `quectel-5g-alternative`) for an
@@ -96,44 +96,55 @@ re-templated: InfluxQL and PromQL share no syntax, and there is no InfluxQL
 source dashboard to clone. `generate.py` and the published dashboard 24835 are
 untouched by it.
 
-## Two datasources, because there are two questions
+## One plugin, and why the top row is not live
 
-**InfluxDB (InfluxQL)** answers *what has the signal been doing* — the history
-rows. It queries the measurements defined by
+Every panel reads InfluxDB, through the measurements defined by
 [`telegraf/quectel.conf`](../telegraf/quectel.conf): `quectel_lte`,
-`quectel_nr5g`, `quectel_carrier`, `quectel_neighbour`.
+`quectel_nr5g`, `quectel_serving`, `quectel_carrier_pcc`/`_scc`,
+`quectel_operator`, and `quectel_neighbour` in its short-retention bucket.
 
-**Infinity** answers *what is it attached to right now* — the whole top row,
-read straight from the router's `/cgi-bin/quectel-status` endpoint and stored
-nowhere. The carrier and neighbour tables live here deliberately: every
-`(pci, arfcn)` pair would otherwise become a series of its own, and on a vessel
-under way that set turns over continuously. A live panel costs nothing and is
-correct the instant the page loads.
+The *Now* row used to read the router's `/cgi-bin/quectel-status` directly,
+through the Infinity plugin. Every value it showed is in InfluxDB too, and
+reading it there:
 
-Install the Infinity plugin first:
+- costs the router's AT bus nothing -- each refresh used to fire ten
+  requests at the endpoint, from every open browser;
+- needs no plugin, and no route from Grafana to the router;
+- cannot turn "cannot read modem" into "no service". Infinity answers a
+  missing JSON path with a query error, and the stat then showed its
+  no-value text as though it were a reading.
 
-```bash
-grafana-cli plugins install yesoreyeram-infinity-datasource
-```
+What it gives up is freshness. The row is the **newest poll**, up to a poll
+interval old, not a live read -- and aiming an antenna is what `5g-monitor`
+is for.
+
+Each *Now* query looks back a fixed window, `--recent-window`, rather than
+over the dashboard's time range. Over the range, `last()` would keep showing
+the final reading hours after polling stopped; bounded to about one poll, the
+row goes blank instead. The window must cover Telegraf's poll interval plus
+its `flush_interval` -- 75s by default, for 60s polls and a 10s flush -- and
+every second beyond that is time a dropped carrier stays on screen, because
+InfluxQL cannot select "only the newest poll". The two tables therefore carry
+a **Seen** column: a row noticeably older than the rest has just gone.
 
 ## Generate
 
 ```bash
-# default: writes quectel-5g-alternative.json with three placeholders --
-# ${DS_INFLUXDB}, ${DS_INFLUXDB_SHORT} and ${DS_INFINITY} -- so importing it
-# asks for three datasources. This is the copy to check in.
+# default: writes quectel-5g-alternative.json with two placeholders --
+# ${DS_INFLUXDB} and ${DS_INFLUXDB_SHORT} -- so importing it asks for two
+# datasources. This is the copy to check in.
 python3 generate_alternative.py
 
-# point it at the router's endpoint if it is not on 192.168.8.1
-python3 generate_alternative.py --url http://10.0.0.1/cgi-bin/quectel-status
-
-# bind to explicit datasource uids (skips the import prompt). There are
-# three, and the short-retention one is not optional -- see "Two InfluxDB
-# datasources" below for why the neighbour panel needs its own.
+# bind to explicit datasource uids (skips the import prompt). Both are
+# InfluxDB, and the short-retention one is not optional -- see "Two InfluxDB
+# datasources" below for why the neighbour panels need their own.
 python3 generate_alternative.py \
     --influxdb-uid <main uid> \
-    --influxdb-short-uid <short-retention uid> \
-    --infinity-uid <infinity uid>
+    --influxdb-short-uid <short-retention uid>
+
+# if Telegraf polls at other than 60s, size the Now window to match:
+# poll interval plus flush_interval
+python3 generate_alternative.py --recent-window 40s
 ```
 
 Binding only some of them is fine: whichever you leave out keeps its
@@ -158,7 +169,7 @@ onto `quectel-influx`, none onto `quectel-influx-short`. The same file with
 the same clicks on 11.6.11 imports correctly, and the HTTP API maps it
 correctly on both -- it is the import form, not the dashboard.
 
-So on 12 or later, generate with all three uids bound as above. That emits no
+So on 12 or later, generate with both uids bound as above. That emits no
 `__inputs` at all, so there is no prompt to get wrong. Read the uids off
 `/api/datasources`:
 
@@ -225,8 +236,8 @@ v1-compatible auth or token:
 
 | Grafana datasource | Database             | Used by                    |
 |--------------------|----------------------|----------------------------|
-| main               | `systemhealth`       | every InfluxQL panel but one |
-| short retention    | `systemhealth_short` | *Neighbours reported*      |
+| main               | `systemhealth`       | every panel but the two neighbour ones |
+| short retention    | `systemhealth_short` | *Neighbour cells*, *Neighbours reported* |
 
 `docker/` builds exactly this, in
 [`docker/influxdb/init/10-buckets-and-dbrp.sh`](../docker/influxdb/init/10-buckets-and-dbrp.sh)
@@ -235,8 +246,8 @@ and
 and `docker/verify.sh` asserts the neighbour panel is actually wired to the
 second one -- provisioned is not the same as wired up.
 
-**If *Neighbours reported* is empty and every other panel works**, this is
-where to look: the panel is on the main datasource. Open it and check.
+**If the two neighbour panels are empty and every other panel works**, this
+is where to look: they are on the main datasource. Open one and check.
 
 ## Thresholds
 

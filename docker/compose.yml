@@ -82,16 +82,13 @@ services:
         condition: service_started
 
   grafana:
-    # Both versions are pinned, and they have to move together. Pinning
-    # Grafana while letting the plugin float is what broke this stack the
-    # first time: GF_INSTALL_PLUGINS with no version installs the newest
-    # Infinity, 4.0.0 declares grafanaDependency ">=11.6.11-0 <12 || ...",
-    # and 11.6.0 is below that floor. Grafana loads the plugin anyway and it
-    # fails in the browser looking for react/jsx-runtime, with an error naming
-    # an unrelated plugin. Nothing in the server log says a word about it.
+    # Pinned, so a Grafana release cannot change what the stack proves
+    # between runs. It used to pin the Infinity plugin in lockstep -- a
+    # floating plugin once installed a version whose Grafana floor was above
+    # this image, and failed only in the browser -- and that constraint left
+    # with the plugin: the dashboard is InfluxDB only now.
     image: grafana/grafana:11.6.11
     environment:
-      GF_INSTALL_PLUGINS: yesoreyeram-infinity-datasource 4.0.0
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin

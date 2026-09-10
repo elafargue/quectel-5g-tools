@@ -223,9 +223,18 @@ echo "$ds" | grep -q quectel-influx \
 echo "$ds" | grep -q quectel-influx-short \
     && check 1 "the short-retention datasource is provisioned" \
     || check 0 "the short-retention datasource is provisioned"
-echo "$ds" | grep -q quectel-infinity \
-    && check 1 "the Infinity datasource is provisioned" \
-    || check 0 "the Infinity datasource is provisioned"
+# Nothing may still point at a plugin datasource. Every panel reads InfluxDB
+# now; a leftover Infinity target would be an error box on any install
+# without the plugin, which is every install.
+nonflux=$(printf '%s' "$dash" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+for p in d.get("dashboard",{}).get("panels",[]):
+    for t in [p]+p.get("targets",[]):
+        ty=(t.get("datasource") or {}).get("type")
+        if ty and ty!="influxdb": print(p.get("title"))' | sort -u)
+[ -z "$nonflux" ] && check 1 "every panel queries InfluxDB" \
+                  || check 0 "every panel queries InfluxDB" "not: $nonflux"
 
 dash=$(curl -s -u admin:admin \
     "$GRAFANA/api/dashboards/uid/quectel-5g-alternative" || true)
@@ -257,6 +266,32 @@ for p in d.get("dashboard", {}).get("panels", []):
     && check 1 "the neighbour panel queries the short-retention datasource" \
     || check 0 "the neighbour panel queries the short-retention datasource" \
              "got '${nbr_ds:-nothing}', wanted 'quectel-influx-short'"
+
+# The Now row, asked the way the browser asks it: the provisioned panels'
+# own queries, through Grafana. Network, Mode and RRC are present on every
+# poll the router answers -- 3G included -- so each must return a value
+# within the recent window. The signal stats are left out on purpose: no NR
+# and no LTE are legitimate states, not failures.
+nowrow=$(printf '%s' "$dash" | GRAFANA="$GRAFANA" python3 -c '
+import json,sys,os,base64,urllib.request
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: sys.exit(0)
+auth="Basic "+base64.b64encode(b"admin:admin").decode()
+for p in d.get("panels",[]):
+    if p.get("title") not in ("Network","Mode","RRC"): continue
+    body=json.dumps({"queries":p["targets"],"from":"now-5m","to":"now"}).encode()
+    rq=urllib.request.Request(os.environ["GRAFANA"]+"/api/ds/query",data=body,
+        headers={"Content-Type":"application/json","Authorization":auth})
+    try: r=json.load(urllib.request.urlopen(rq,timeout=10))["results"]["A"]
+    except Exception as e: print(p["title"],"error",e); continue
+    vals=[v for f in r.get("frames",[]) for v in (f.get("data",{}).get("values") or [[]])[-1]]
+    print(p["title"], "ok" if vals and vals[-1] not in (None,"") else "empty")' 2>/dev/null)
+for t in Network Mode RRC; do
+    echo "$nowrow" | grep -qx "$t ok" \
+        && check 1 "the Now row's $t answers through Grafana" \
+        || check 0 "the Now row's $t answers through Grafana" \
+                 "$(echo "$nowrow" | grep "^$t" || echo 'panel not found')"
+done
 
 echo ""
 echo "=== $pass passed, $fail failed ==="

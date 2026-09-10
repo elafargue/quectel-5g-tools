@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Generate the alternative Quectel dashboard: InfluxQL history + live snapshot.
+"""Generate the alternative Quectel dashboard: InfluxQL history and latest poll.
 
 `generate.py` builds the published dashboard (grafana.com id 24835) against
 VictoriaMetrics/PromQL, by re-templating an upstream source dashboard. This is
 a separate artifact for a different stack and is built from scratch, because
 InfluxQL and PromQL share no syntax and there is no InfluxQL source to clone.
 
-Two datasources, because the dashboard answers two different questions:
+Everything comes from InfluxDB, fed by `telegraf/quectel.conf`, which polls
+the router's JSON endpoint. Two databases -- neighbours live in a bucket that
+expires in a day -- so two InfluxDB datasources, but one plugin.
 
-  * **InfluxDB (InfluxQL)** for history -- what the signal has been doing.
-    Fed by `telegraf/quectel.conf`, which polls the router's JSON endpoint.
-  * **Infinity** for the snapshot -- what the radio is attached to *right now*,
-    read straight from the router and never stored. The cell and neighbour
-    lists belong here: every (pci, arfcn) pair would otherwise be a series of
-    its own, and on a vessel under way that set turns over continuously.
+The top row used to read the router directly through the Infinity plugin.
+Every value it showed is also in InfluxDB, and reading it there costs the
+router's AT bus nothing, needs no plugin and no route from Grafana to the
+router, and cannot turn the endpoint's "cannot read modem" into "no service"
+-- which the Infinity path did, because Infinity answers a missing JSON path
+with a query error and the stat falls back to its no-value text. What the
+row gives up is freshness: it is the newest poll, up to a poll interval old,
+not a live read. Aiming an antenna is 5g-monitor's job, not a dashboard's.
 
 The history panels query the measurements defined in telegraf/quectel.conf --
 quectel_lte, quectel_nr5g, quectel_carrier, quectel_neighbour -- and not the
@@ -29,19 +33,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 INFLUX_PLUGIN_ID = "influxdb"
 INFLUX_PLUGIN_NAME = "InfluxDB"
-INFINITY_PLUGIN_ID = "yesoreyeram-infinity-datasource"
-INFINITY_PLUGIN_NAME = "Infinity"
 
 DEFAULT_INFLUX_INPUT = "${DS_INFLUXDB}"
-DEFAULT_INFINITY_INPUT = "${DS_INFINITY}"
 DEFAULT_INFLUX_SHORT_INPUT = "${DS_INFLUXDB_SHORT}"
 
-DEFAULT_STATUS_URL = "http://192.168.8.1/cgi-bin/quectel-status"
+# How far back the "Now" row looks for the newest poll.
+#
+# It has to cover Telegraf's poll interval plus its flush_interval: a poll
+# becomes visible up to flush_interval after it is taken, so at the moment
+# the dashboard asks, the newest one can be interval + flush old -- 60s + 10s
+# with telegraf/quectel.conf and Telegraf's default flush. Any shorter and the
+# row blinks empty between polls.
+#
+# Every second longer is time a carrier that has just been dropped stays on
+# screen. InfluxQL cannot select "only the newest poll" -- it cannot treat
+# time as a value to compare against -- so the window is the only lever.
+# Measured on the dev stack with a 90s window over 10s polls: 11 carrier rows
+# where 4 were current, 33 neighbours where about 7 were. --recent-window
+# sets it; docker/up.sh passes 25s for the stack's 10s polls.
+DEFAULT_RECENT_WINDOW = "75s"
 # The InfluxQL database name, which a DBRP mapping resolves to a bucket.
 DEFAULT_DATABASE = "systemhealth"
 # Neighbours live in a shorter-lived bucket of their own; see
@@ -66,6 +82,9 @@ TECH_COLOURS = [
     ("NSA", "5G NSA", "green"),
     ("SA", "5G SA", "blue"),
 ]
+TECH_MAPPING = {"type": "value", "options": {
+    v: {"text": t, "color": c, "index": i}
+    for i, (v, t, c) in enumerate(TECH_COLOURS)}}
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +98,7 @@ TECH_COLOURS = [
 # what RSRQ stands for to know whether the number in front of them is bad.
 #
 # The three signal metrics are defined once and composed into every panel that
-# shows them, so the explanation of RSRP cannot drift between the live stat and
+# shows them, so the explanation of RSRP cannot drift between the Now stat and
 # the history graph. The thresholds quoted are RSRP_STEPS / RSRQ_STEPS /
 # SINR_STEPS above -- change those and these sentences become wrong, which is
 # the one coupling here worth remembering.
@@ -104,10 +123,21 @@ RSRQ_DOC = (
     "aim. Green from -10, red below -15."
 )
 
-LIVE_DOC = (
-    "Read live from the router each time the dashboard refreshes, and stored "
-    "nowhere -- this is *now*, not the last scrape."
-)
+def recent_doc(window: str) -> str:
+    """The note every "Now" panel carries about how current it is."""
+    return (
+        f"The newest poll in the last {window}, from InfluxDB. The router is "
+        "polled on an interval -- every 60 seconds as deployed -- so this can "
+        "be up to about that old: the latest reading, not a live one.")
+
+
+def seen_doc(window: str, what: str) -> str:
+    """Why the tables carry an age column, and how to read it."""
+    return (
+        f"**Seen** is how old each row is. The table is every {what} heard in "
+        f"the last {window}, each at its own latest reading, so a row "
+        "noticeably older than the rest is one that has just gone and will "
+        "age out shortly.")
 
 GAPS_DOC = (
     "Gaps are polls where nothing was reported, drawn as a break rather than "
@@ -127,10 +157,6 @@ def influx(uid: str) -> dict:
     return {"type": INFLUX_PLUGIN_ID, "uid": uid}
 
 
-def infinity(uid: str) -> dict:
-    return {"type": INFINITY_PLUGIN_ID, "uid": uid}
-
-
 def steps(pairs) -> dict:
     return {
         "mode": "absolute",
@@ -141,7 +167,8 @@ def steps(pairs) -> dict:
     }
 
 
-def iql(uid: str, ref: str, query: str, alias: str | None = None) -> dict:
+def iql(uid: str, ref: str, query: str, alias: str | None = None,
+        fmt: str = "time_series") -> dict:
     """A raw InfluxQL target.
 
     Raw rather than the builder form: the builder cannot express the GROUP BY
@@ -153,37 +180,13 @@ def iql(uid: str, ref: str, query: str, alias: str | None = None) -> dict:
         "refId": ref,
         "query": query,
         "rawQuery": True,
-        "resultFormat": "time_series",
+        # "table" for the two Now tables: tags come back as columns, one row
+        # per series, which is what LIMIT 1 per series wants.
+        "resultFormat": fmt,
     }
     if alias:
         t["alias"] = alias
     return t
-
-
-def inf(uid: str, ref: str, url: str, selector: str, columns: list) -> dict:
-    """An Infinity target reading one path out of the status JSON.
-
-    `parser: backend` so the parsing happens in Grafana's backend rather than
-    the browser: it keeps the router's address out of the page and lets the
-    panel work when the browser cannot reach the router directly.
-    """
-    return {
-        "datasource": infinity(uid),
-        "refId": ref,
-        "type": "json",
-        "source": "url",
-        "format": "table",
-        "parser": "backend",
-        "url": url,
-        "url_options": {"method": "GET", "data": ""},
-        "root_selector": selector,
-        "columns": columns,
-        "filters": [],
-    }
-
-
-def col(selector: str, text: str, kind: str = "string") -> dict:
-    return {"selector": selector, "text": text, "type": kind}
 
 
 def row(title: str, y: int, collapsed: bool = False) -> dict:
@@ -198,18 +201,24 @@ def row(title: str, y: int, collapsed: bool = False) -> dict:
 
 def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
          text_mode="value", no_value="—", decimals=None,
-         string_value=False, description="") -> dict:
+         string_value=False, description="", mappings=None) -> dict:
     """string_value picks up a text field rather than a number.
 
     reduceOptions.fields defaults to "", which Grafana reads as *numeric
     fields only*. A frame carrying one string column then has nothing to
     reduce and the panel shows its noValue text -- so an operator name
     renders as "no service" while the query behind it is returning "KT"
-    perfectly well. "/.*/" matches every field regardless of type.
+    perfectly well.
+
+    Every field except Time, though, not every field. An InfluxDB
+    time-series frame carries its timestamp as a field too, and "/.*/" put
+    it on the panel as a second value -- "2026-09-10 17:06:30" above "KT".
+    The Infinity frames this replaced had no time column, so the regression
+    arrived with the switch and only showed once rendered.
     """
     field: dict = {
         "custom": {},
-        "mappings": [],
+        "mappings": mappings or [],
         "noValue": no_value,
     }
     if unit:
@@ -231,11 +240,12 @@ def stat(title, gridpos, targets, ds, unit=None, thresholds=None,
         "fieldConfig": {"defaults": field, "overrides": []},
         "options": {
             "reduceOptions": {"calcs": ["lastNotNull"],
-                              "fields": "/.*/" if string_value else "",
+                              "fields": "/^(?!Time$).*$/" if string_value
+                                        else "",
                               "values": False},
             "orientation": "auto",
             "textMode": text_mode,
-            "colorMode": "value" if thresholds else "none",
+            "colorMode": "value" if (thresholds or mappings) else "none",
             "graphMode": "none",
             "justifyMode": "auto",
         },
@@ -356,112 +366,144 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
 # panels
 # ---------------------------------------------------------------------------
 
-def build_panels(iu: str, fu: str, url: str, su: str) -> list:
-    """iu = InfluxDB uid, fu = Infinity uid, url = status endpoint,
-    su = uid of the datasource holding the short-retention neighbour bucket."""
+def build_panels(iu: str, su: str, window: str) -> list:
+    """iu = InfluxDB uid, su = uid of the datasource holding the
+    short-retention neighbour bucket, window = how far back the Now row looks
+    for the newest poll (DEFAULT_RECENT_WINDOW explains the choice)."""
     panels: list = []
+    recent = recent_doc(window)
+    since = f"time > now() - {window}"
 
     # -- Now ----------------------------------------------------------------
-    # Read live from the router. Nothing in this row is stored anywhere, which
-    # is the point: it is the answer to "what is it on, right now", and it is
-    # correct the instant the page loads rather than as of the last scrape.
+    # The newest poll, from InfluxDB. A fixed window rather than $timeFilter,
+    # and the difference matters: last() over the dashboard's range would keep
+    # showing the final reading hours after polling stopped, as if it were
+    # current. Bounded to about one poll, the row goes blank instead -- a
+    # reading nobody took is not shown as one.
     panels.append(row("Now", 0))
 
+    # operator_short rather than the long name: it is a field, so last()
+    # returns the single newest value without a GROUP BY. The long name is a
+    # tag, and grouping by it would show two operators side by side for the
+    # length of the window after every roam.
     panels.append(stat(
         "Network", gp(0, 1, 4, 4),
-        [inf(fu, "A", url, "operator", [col("operator", "Operator")])],
-        infinity(fu), text_mode="value", no_value="no service",
-        string_value=True,
+        [iql(iu, "A", 'SELECT last("operator_short") FROM "quectel_operator" '
+                      f'WHERE {since}')],
+        influx(iu), no_value="no reading", string_value=True,
         description=(
-            "The mobile network the modem is registered with. " + LIVE_DOC +
-            "\n\nReads *no service* when the modem is not registered at all "
-            "-- searching, out of coverage, or no usable SIM.")))
+            "The mobile network the modem is registered with. " + recent +
+            "\n\n*no reading* means no operator arrived in that time: the "
+            "modem is not registered -- searching, out of coverage, no usable "
+            "SIM -- or the router could not be read at all. *RRC* beside it "
+            "tells those apart: it still has a state when the modem is merely "
+            "unregistered, and goes blank too only when nothing could be "
+            "read.")))
 
+    # technology, not mode. mode is absent on an LTE-only attach, and last()
+    # over the window would then keep showing the NSA from before the NR leg
+    # dropped until it aged out. technology is present whenever there is a
+    # cell, so the change shows on the very next poll.
     panels.append(stat(
         "Mode", gp(4, 1, 3, 4),
-        [inf(fu, "A", url, "serving", [col("mode", "Mode")])],
-        infinity(fu), no_value="—", string_value=True,
+        [iql(iu, "A", 'SELECT last("technology") FROM "quectel_serving" '
+                      f'WHERE {since}')],
+        influx(iu), no_value="no reading", string_value=True,
+        mappings=[TECH_MAPPING],
         description=(
-            "How 5G is attached. `NSA` (non-standalone) is 5G carried on top "
-            "of an LTE anchor and is the usual case; `SA` is standalone 5G "
-            "with no LTE underneath.\n\nA dash means there is no 5G leg at "
-            "all and the modem is on LTE alone -- the same condition the NR "
-            "panels show as *no NR*.")))
+            "Which radio technology the modem is attached to: **3G**, **4G "
+            "LTE**, **5G NSA** (5G riding on an LTE anchor, the usual case) "
+            "or **5G SA** (standalone 5G). *Connection mode* further down is "
+            "the same value over time.\n\n" + recent + "\n\n"
+            "*no reading* means no poll arrived, or the modem had no cell at "
+            "all. Being on LTE alone is not blank here -- it reads 4G LTE.")))
 
     panels.append(stat(
         "RRC", gp(7, 1, 3, 4),
-        [inf(fu, "A", url, "serving", [col("state", "State")])],
-        infinity(fu), no_value="—", string_value=True,
+        [iql(iu, "A", 'SELECT last("state") FROM "quectel_serving" '
+                      f'WHERE {since}')],
+        influx(iu), no_value="no reading", string_value=True,
         description=(
             "The radio connection state the modem reports: `CONNECT` while a "
             "link is actively carrying data, `NOCONN` when it is camped on a "
             "cell with nothing to send, `SEARCH` while looking for one, "
             "`LIMSRV` for limited service (emergency calls only).\n\n"
             "`NOCONN` is **not** a fault. An idle link sits there most of the "
-            "time; it says nothing about signal quality.")))
+            "time; it says nothing about signal quality.\n\n" + recent +
+            " *no reading* means no poll arrived: the router or the modem "
+            "could not be read.")))
 
     # The two numbers you actually steer by. Thresholds are the ones
     # 5g-monitor colours its output with, so a green here is a green there.
     panels.append(stat(
         "NR RSRP", gp(10, 1, 4, 4),
-        [inf(fu, "A", url, "serving.nr5g", [col("rsrp", "RSRP", "number")])],
-        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="no NR",
+        [iql(iu, "A", f'SELECT last("rsrp") FROM "quectel_nr5g" WHERE {since}')],
+        influx(iu), unit="dBm", thresholds=RSRP_STEPS, no_value="no NR",
         description=(
-            RSRP_DOC + "\n\nThis is the 5G carrier. Reads *no NR* whenever "
-            "the 5G leg is detached and the modem is running on LTE alone.\n\n"
-            + LIVE_DOC)))
+            RSRP_DOC + "\n\nThis is the 5G carrier. Reads *no NR* when no 5G "
+            "reading arrived in the window: the 5G leg is detached, or the "
+            "router could not be read -- *Mode* tells you which.\n\n" + recent
+            + " After the 5G leg drops, its last value stays here until it "
+            "ages out of that window.")))
 
     panels.append(stat(
         "NR SINR", gp(14, 1, 4, 4),
-        [inf(fu, "A", url, "serving.nr5g", [col("sinr", "SINR", "number")])],
-        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="no NR",
+        [iql(iu, "A", f'SELECT last("sinr") FROM "quectel_nr5g" WHERE {since}')],
+        influx(iu), unit="dB", thresholds=SINR_STEPS, no_value="no NR",
         description=(
             SINR_DOC + "\n\nThis is the 5G carrier, and it is the value to "
-            "aim a directional antenna by -- the one `5g-monitor` turns into "
-            "beeps so you can point without watching a screen.\n\n"
-            + LIVE_DOC)))
+            "aim a directional antenna by -- but aim by `5g-monitor`, which "
+            "reads the modem directly and beeps it, not by this: " + recent)))
 
     panels.append(stat(
         "LTE RSRP", gp(18, 1, 3, 4),
-        [inf(fu, "A", url, "serving.lte", [col("rsrp", "RSRP", "number")])],
-        infinity(fu), unit="dBm", thresholds=RSRP_STEPS, no_value="—",
+        [iql(iu, "A", f'SELECT last("rsrp") FROM "quectel_lte" WHERE {since}')],
+        influx(iu), unit="dBm", thresholds=RSRP_STEPS, no_value="no LTE",
         description=(
             RSRP_DOC + "\n\nThis is the 4G carrier. In NSA mode it is also "
             "the anchor the 5G leg is bolted to, so it is worth watching even "
             "when 5G is doing the work: lose the anchor and the 5G goes with "
-            "it.\n\n" + LIVE_DOC)))
+            "it. Reads *no LTE* on a 3G attach, where there is no LTE cell, "
+            "or when nothing could be read -- *Mode* tells you which.\n\n"
+            + recent)))
 
     panels.append(stat(
         "LTE SINR", gp(21, 1, 3, 4),
-        [inf(fu, "A", url, "serving.lte", [col("sinr", "SINR", "number")])],
-        infinity(fu), unit="dB", thresholds=SINR_STEPS, no_value="—",
-        description=SINR_DOC + "\n\nThis is the 4G carrier.\n\n" + LIVE_DOC))
+        [iql(iu, "A", f'SELECT last("sinr") FROM "quectel_lte" WHERE {since}')],
+        influx(iu), unit="dB", thresholds=SINR_STEPS, no_value="no LTE",
+        description=SINR_DOC + "\n\nThis is the 4G carrier.\n\n" + recent))
 
-    # The aggregated carriers, which is what 5g-info prints as its CA table.
-    # Two targets because the primary is an object and the secondaries an
-    # array; the merge transformation stacks them into one table.
-    carrier_cols = [
-        col("role", "Role"), col("rat", "RAT"), col("band", "Band", "number"),
-        col("pci", "PCI", "number"),
-        col("frequency_mhz", "MHz", "number"),
-        col("bandwidth_mhz", "BW", "number"),
-        col("rsrp", "RSRP", "number"), col("sinr", "SINR", "number"),
-    ]
+    # The aggregated carriers, what 5g-info prints as its CA table.
+    #
+    # One row per carrier, each at its own latest point: GROUP BY every tag
+    # that identifies a carrier, then LIMIT 1 per series. arfcn is in the
+    # group because two secondaries can share role, rat and band, and before
+    # arfcn was a tag the second one's points overwrote the first's. It is
+    # then excluded from display -- MHz already tells the two apart.
     panels.append(table(
         "Connected carriers", gp(0, 5, 12, 9),
-        [inf(fu, "A", url, "ca.pcc", carrier_cols),
-         inf(fu, "B", url, "ca.scc", carrier_cols)],
-        infinity(fu),
+        [iql(iu, "A",
+             'SELECT "pci", "frequency_mhz", "bandwidth_mhz", "rsrp", "sinr" '
+             'FROM "quectel_carrier_pcc", "quectel_carrier_scc" '
+             f'WHERE {since} GROUP BY "role", "rat", "band", "arfcn" '
+             'ORDER BY time DESC LIMIT 1', fmt="table")],
+        influx(iu),
         transformations=[
-            {"id": "merge", "options": {}},
-            _order("Role", "RAT", "Band", "PCI", "MHz", "BW", "RSRP", "SINR"),
+            {"id": "sortBy", "options": {
+                "fields": {}, "sort": [{"field": "role"}]}},
+            _organize([("role", "Role"), ("rat", "RAT"), ("band", "Band"),
+                       ("pci", "PCI"), ("frequency_mhz", "MHz"),
+                       ("bandwidth_mhz", "BW"), ("rsrp", "RSRP"),
+                       ("sinr", "SINR"), ("Time", "Seen")],
+                      exclude=("arfcn",)),
         ],
         overrides=[
-            _width("Role", 60), _width("RAT", 55), _width("Band", 60),
-            _width("PCI", 60), _width("MHz", 80, decimals=1),
-            _width("BW", 60),
-            _colour_override("RSRP", RSRP_STEPS, "dBm", 80),
-            _colour_override("SINR", SINR_STEPS, "dB", 70),
+            _width("Role", 50), _width("RAT", 45), _width("Band", 50),
+            _width("PCI", 50), _width("MHz", 70, decimals=1),
+            _width("BW", 45),
+            _colour_override("RSRP", RSRP_STEPS, "dBm", 70),
+            _colour_override("SINR", SINR_STEPS, "dB", 60),
+            _seen_override(),
         ],
         description=(
             "Every carrier the modem is using at once. Mobile networks bond "
@@ -473,32 +515,34 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             "added on top.\n"
             "- **Band** -- the block of spectrum. Low bands (LTE 20, 5G n28) "
             "travel far and pass through obstacles; high ones (LTE 7, n78) "
-            "are much faster but shorter-ranged.\n"
+            "are much faster but shorter-ranged. Two rows can share a band.\n"
             "- **PCI** -- identifies which cell of that band, out of 504 "
             "possible codes. A change of PCI is a change of cell.\n"
             "- **MHz / BW** -- centre frequency and channel width. Wider is "
-            "faster.\n\n" + LIVE_DOC)))
+            "faster.\n\n" + seen_doc(window, "carrier") + "\n\n" + recent)))
 
-    # Neighbours: live only. Storing them is what would grow the index without
-    # bound, so this panel is the reason the endpoint exists.
+    # The neighbour list, from the short-retention bucket -- which, for the
+    # first time, is read row by row rather than only counted.
     panels.append(table(
         "Neighbour cells", gp(12, 5, 12, 9),
-        [inf(fu, "A", url, "neighbours", [
-            col("rat", "RAT"), col("scope", "Scope"),
-            col("arfcn", "ARFCN", "number"), col("pci", "PCI", "number"),
-            col("rsrp", "RSRP", "number"), col("rsrq", "RSRQ", "number"),
-        ])],
-        infinity(fu),
+        [iql(su, "A",
+             'SELECT "rsrp", "rsrq" FROM "quectel_neighbour" '
+             f'WHERE {since} GROUP BY "rat", "scope", "arfcn", "pci" '
+             'ORDER BY time DESC LIMIT 1', fmt="table")],
+        influx(su),
         transformations=[
-            _order("RAT", "Scope", "ARFCN", "PCI", "RSRP", "RSRQ"),
             {"id": "sortBy", "options": {
-                "fields": {}, "sort": [{"field": "RSRP", "desc": True}]}},
+                "fields": {}, "sort": [{"field": "rsrp", "desc": True}]}},
+            _organize([("rat", "RAT"), ("scope", "Scope"), ("arfcn", "ARFCN"),
+                       ("pci", "PCI"), ("rsrp", "RSRP"), ("rsrq", "RSRQ"),
+                       ("Time", "Seen")]),
         ],
         overrides=[
-            _width("RAT", 55), _width("Scope", 70), _width("ARFCN", 80),
-            _width("PCI", 60),
-            _colour_override("RSRP", RSRP_STEPS, "dBm", 85),
-            _colour_override("RSRQ", RSRQ_STEPS, "dB", 80),
+            _width("RAT", 50), _width("Scope", 60), _width("ARFCN", 70),
+            _width("PCI", 50),
+            _colour_override("RSRP", RSRP_STEPS, "dBm", 75),
+            _colour_override("RSRQ", RSRQ_STEPS, "dB", 70),
+            _seen_override(),
         ],
         description=(
             "Other cells the modem can hear but is **not** using, strongest "
@@ -511,9 +555,13 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             "the serving cell, `inter` one on a different frequency.\n"
             "- **ARFCN** -- the channel number the cell transmits on.\n"
             "- **PCI** -- identifies the cell within that channel.\n\n"
-            + LIVE_DOC + " The history of this list is summarised by "
-            "*Neighbours reported* below; the rows themselves are never "
-            "kept.")))
+            + seen_doc(window, "neighbour") + " Neighbours turn over fast on "
+            "a moving vessel, so expect more of these than in the carriers "
+            "table.\n\n" + recent + " Kept for 24 hours in a short-retention "
+            "bucket of its own; *Neighbours reported* below is that history as "
+            "a count. 3G neighbours are not listed: the modem reports them in "
+            "two layouts that cannot be told apart, so only their channel is "
+            "recorded.")))
 
     # -- Signal history -----------------------------------------------------
     panels.append(row("Signal history", 14))
@@ -769,9 +817,7 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             "the modem reports no LTE and no NR serving cell, so guessing the "
             "technology from which measurements exist would call a working "
             "link no reading at all."),
-        mappings=[{"type": "value", "options": {
-            v: {"text": t, "color": c, "index": i}
-            for i, (v, t, c) in enumerate(TECH_COLOURS)}}]))
+        mappings=[TECH_MAPPING]))
 
     return panels
 
@@ -790,16 +836,26 @@ def _width(field: str, px: int, decimals: int | None = None) -> dict:
     return {"matcher": {"id": "byName", "options": field}, "properties": props}
 
 
-def _order(*names: str) -> dict:
-    """Lay table columns out in the given order.
+def _organize(columns: list, exclude: tuple = ()) -> dict:
+    """Rename table columns and lay them out in the given order.
 
-    Without this Grafana uses whatever order the frame carries, which after a
-    merge is alphabetical -- BW, Band, MHz, PCI, RAT -- readable only by
-    accident, and it puts the identity columns after the measurements.
+    `columns` is (source name, shown name) pairs. InfluxQL's table format
+    names columns after tag keys and field keys -- role, frequency_mhz --
+    and Grafana orders them however the frame arrives, which puts identity
+    columns among the measurements.
     """
     return {"id": "organize",
-            "options": {"indexByName": {n: i for i, n in enumerate(names)},
-                        "excludeByName": {}, "renameByName": {}}}
+            "options": {
+                "indexByName": {src: i for i, (src, _) in enumerate(columns)},
+                "renameByName": {src: shown for src, shown in columns},
+                "excludeByName": {name: True for name in exclude}}}
+
+
+def _seen_override() -> dict:
+    """The row's timestamp, shown as its age: "a few seconds ago"."""
+    return {"matcher": {"id": "byName", "options": "Seen"},
+            "properties": [{"id": "unit", "value": "dateTimeFromNow"},
+                           {"id": "custom.width", "value": 115}]}
 
 
 def _colour_override(field: str, thresholds, unit: str,
@@ -869,8 +925,8 @@ def _validate(panels: list, seen: set | None = None) -> None:
                     f"different datasource than the panel")
 
 
-def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
-                    short_uid: str) -> dict:
+def build_dashboard(influx_uid: str, short_uid: str,
+                    window: str = DEFAULT_RECENT_WINDOW) -> dict:
     # The two InfluxDB uids must differ, and nothing downstream would say so.
     # quectel_neighbour is namedrop'd out of the main bucket by
     # telegraf/quectel.conf, so pointing the neighbour panel at the main
@@ -893,15 +949,15 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
             f"pointing both at it leaves 'Neighbours reported' permanently "
             f"empty with no error to say why.")
 
-    panels = build_panels(influx_uid, infinity_uid, url, short_uid)
+    panels = build_panels(influx_uid, short_uid, window)
     _assign_ids(panels)
     _validate(panels)
 
     dash: dict = {
-        "title": "Quectel 5G — Alternative (InfluxQL + live)",
+        "title": "Quectel 5G — Alternative (InfluxQL)",
         "description": (
-            "Live radio snapshot read from the router plus signal history "
-            "from InfluxDB. Every panel carries an explanation behind the "
+            "The newest poll and the signal history, all from InfluxDB. "
+            "Every panel carries an explanation behind the "
             "small \"i\" in its top-left corner -- hover it if a number or "
             "an acronym is unfamiliar. In short: RSRP is how strong the "
             "signal is, SINR is how clean it is and is the one that "
@@ -912,8 +968,9 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
         "uid": "quectel-5g-alternative",
         "tags": ["5g", "lte", "quectel", "openwrt", "influxdb"],
         "timezone": "browser",
-        # The snapshot row is only as current as the dashboard refresh, and the
-        # endpoint is cheap because the router caches AT reads.
+        # Refreshing queries InfluxDB only, never the router, so it costs the
+        # AT bus nothing; the Now row changes once per poll however often it
+        # runs.
         "refresh": "30s",
         "schemaVersion": 42,
         "editable": True,
@@ -978,12 +1035,6 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
                              "one",
               "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
               "pluginName": INFLUX_PLUGIN_NAME}),
-            (infinity_uid,
-             {"name": "DS_INFINITY", "label": INFINITY_PLUGIN_NAME,
-              "description": "Select the Infinity datasource that reads "
-                             "the router's status endpoint",
-              "type": "datasource", "pluginId": INFINITY_PLUGIN_ID,
-              "pluginName": INFINITY_PLUGIN_NAME}),
         ) if uid == "${" + spec["name"] + "}"
     ]
 
@@ -994,8 +1045,6 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
              "version": "11.0.0"},
             {"type": "datasource", "id": INFLUX_PLUGIN_ID,
              "name": INFLUX_PLUGIN_NAME, "version": "1.0.0"},
-            {"type": "datasource", "id": INFINITY_PLUGIN_ID,
-             "name": INFINITY_PLUGIN_NAME, "version": "2.0.0"},
         ]
     return dash
 
@@ -1006,10 +1055,11 @@ def main() -> int:
                     help="write to stdout instead of the JSON file")
     ap.add_argument("--influxdb-uid", default=DEFAULT_INFLUX_INPUT,
                     help="bind to an explicit InfluxDB datasource uid")
-    ap.add_argument("--infinity-uid", default=DEFAULT_INFINITY_INPUT,
-                    help="bind to an explicit Infinity datasource uid")
-    ap.add_argument("--url", default=DEFAULT_STATUS_URL,
-                    help="the router's JSON status endpoint")
+    ap.add_argument("--recent-window", default=DEFAULT_RECENT_WINDOW,
+                    help="how far back the Now row looks for the newest poll: "
+                         "Telegraf's poll interval plus its flush_interval, "
+                         "e.g. 75s for 60s polls (the default), 25s for the "
+                         "dev stack's 10s")
     ap.add_argument("--influxdb-short-uid", default=DEFAULT_INFLUX_SHORT_INPUT,
                     help="datasource uid for the short-retention neighbour "
                          "bucket (a second InfluxDB datasource, since an "
@@ -1018,8 +1068,13 @@ def main() -> int:
 
     # Which uids need an import prompt is decided per uid inside
     # build_dashboard, from whether each is still its placeholder.
-    dash = build_dashboard(args.influxdb_uid, args.infinity_uid,
-                           args.url, args.influxdb_short_uid)
+    # It goes into every Now query verbatim, so it has to be an InfluxQL
+    # duration and nothing else.
+    if not re.fullmatch(r"[1-9][0-9]*[smh]", args.recent_window):
+        raise SystemExit(f"--recent-window must be an InfluxQL duration such "
+                         f"as 75s or 2m, not {args.recent_window!r}")
+    dash = build_dashboard(args.influxdb_uid, args.influxdb_short_uid,
+                           args.recent_window)
     text = json.dumps(dash, indent=2, sort_keys=False) + "\n"
 
     if args.stdout:

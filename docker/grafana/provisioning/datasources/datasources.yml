@@ -36,13 +36,3 @@ datasources:
       httpHeaderName1: Authorization
     secureJsonData:
       httpHeaderValue1: Token $INFLUX_TOKEN
-
-  # Reads the router's status endpoint straight, for the live snapshot row.
-  # Grafana's backend does the fetching, so the browser never needs a route to
-  # the router.
-  - name: Infinity
-    uid: quectel-infinity
-    type: yesoreyeram-infinity-datasource
-    access: proxy
-    jsonData:
-      allowed_hosts_enabled: false

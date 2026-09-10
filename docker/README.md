@@ -33,7 +33,7 @@ variables.
 | **fake-router** | Stands in for a GL-X3000 on `:8080`. Walks the signal, hands over between sites, drops the NR leg, and refuses to answer 2% of the time. |
 | **influxdb** | 2.7, with `systemhealth` (30d) and `systemhealth_short` (24h), and the DBRP mappings that make InfluxQL work. |
 | **telegraf** | `telegraf/quectel.conf` verbatim, pointed at the fake router and polling every 10s instead of 60. |
-| **grafana** | 11.6 with the Infinity plugin, both datasources and the dashboard provisioned. |
+| **grafana** | 11.6, no plugins, both InfluxDB datasources and the dashboard provisioned. |
 
 ## The fake router earns its place
 

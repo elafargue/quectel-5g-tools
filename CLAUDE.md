@@ -297,6 +297,42 @@ in it — an empty panel with no error. `quectel_serving` therefore carries no
 tags at all, and `docker/verify.sh` asserts that, since nothing else would
 catch it.
 
+## The dashboard's Now row is the newest poll, not a live read
+
+The alternative dashboard used to read its top row straight from the router
+through Grafana's Infinity plugin. It now reads InfluxDB like everything else.
+Infinity cost a plugin, a route from Grafana to the router, and ten endpoint
+requests per refresh per open browser against an AT bus Telegraf's 60s poll
+exists to spare -- and it rendered the endpoint's `{"error": ...}` as the
+stats' no-value text, "no service", which is the unreachable-reads-as-no-
+signal failure this file is otherwise about.
+
+Three things make the InfluxDB version honest, and all three are easy to undo
+by accident:
+
+- **A fixed window, not `$timeFilter`.** `last()` over the dashboard's range
+  keeps showing the final reading hours after polling stops. The window is
+  `--recent-window`, default 75s: Telegraf's 60s interval plus its 10s
+  `flush_interval`, the oldest the newest poll can be when the dashboard asks.
+  Shorter and the row blinks empty between polls; longer and dropped carriers
+  linger. `docker/up.sh` passes 25s for the stack's 10s polls. A 90s window
+  over 10s polls was measured returning 11 carrier rows where 4 were current.
+- **`LIMIT 1` per series, and a Seen column.** InfluxQL cannot select "only
+  the newest poll" -- it cannot compare against time as a value -- so the two
+  tables are "every carrier/neighbour heard in the window, each at its latest
+  point", and Seen shows each row's age so a just-dropped one is visible as
+  older.
+- **Mode shows `technology`, not `mode`.** `mode` is absent on an LTE-only
+  attach, so `last()` would keep showing the NSA from before the NR leg
+  dropped until it aged out of the window.
+
+The carriers query groups by `arfcn`, which is why that became a tag on
+`quectel_carrier_pcc`/`_scc`: two secondaries on one band used to share a
+series key, and InfluxDB kept one of them. Reproduced on the dev stack before
+the fix -- the router sent B3 at 1350 and 1850 every poll, InfluxDB stored
+1850 alone. It is still deliberately not a tag on `quectel_lte`, which has one
+row per poll and nothing to collide with.
+
 ## Neighbour rows are chosen, not just printed
 
 `print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`

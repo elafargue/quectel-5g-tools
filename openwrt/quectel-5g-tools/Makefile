@@ -61,7 +61,7 @@ define Package/quectel-5g-tools/description
     - 5g-lock: Band and cell locking utility
     - 5g-collectd: collectd exec plugin feeding signal metrics to RRD
     - quectel-status: uhttpd CGI serving the full status as JSON, for
-      Telegraf and for Grafana's Infinity datasource
+      Telegraf
     - Prometheus collector for prometheus-node-exporter-lua
 endef
 
