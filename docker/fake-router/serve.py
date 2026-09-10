@@ -55,6 +55,22 @@ NETWORKS = [
         "nr": {"band": 28, "arfcn": 156510, "freq": 782.55, "bw": 10,
                "scs": 0},
     },
+    {   # SYNTHETIC, NOT A CAPTURE. TIM Italy's PCC, B3 secondary and n78 from
+        # the sample in CLAUDE.md, plus a *second* B3 secondary at EARFCN 1850
+        # that no capture has ever shown. It is here because nothing else
+        # exercises two secondaries on one band -- KT's two B3 carriers are a
+        # primary and a secondary, which differ by role and so never collide.
+        # Two SCCs sharing role, rat and band share a series key too, and one
+        # silently overwrites the other in InfluxDB unless arfcn separates
+        # them. Frequencies are from the raster: 2110 + 0.1*275, and
+        # 1805 + 0.1*(n - 1200) for B3.
+        "operator": "TIM", "mcc": 222, "mnc": 1, "mcc_mnc": "22201",
+        "lte": {"band": 1, "arfcn": 275, "freq": 2137.5, "bw": 15},
+        "scc": [{"band": 3, "arfcn": 1350, "freq": 1820.0, "bw": 20},
+                {"band": 3, "arfcn": 1850, "freq": 1870.0, "bw": 10}],
+        "nr": {"band": 78, "arfcn": 648768, "freq": 3731.52, "bw": 80,
+               "scs": 1},
+    },
 ]
 
 
@@ -62,7 +78,10 @@ class Radio:
     """A slow random walk, so graphs bend rather than jump."""
 
     def __init__(self):
-        self.net = 0
+        # Which network to start on. The roam below is rare by design, so
+        # without this a check that needs one particular network waits minutes
+        # for it -- QUECTEL_NETWORK in compose.yml.
+        self.net = int(os.environ.get("NETWORK", "0")) % len(NETWORKS)
         self.lte_rsrp = -85.0
         self.nr_rsrp = -90.0
         self.enodeb = 5727
@@ -91,8 +110,8 @@ class Radio:
             self.pci = random.randint(0, 503)
         if random.random() < 0.02:          # NR cell changes
             self.nr_pci = random.randint(0, 1007)
-        if random.random() < 0.004:         # roam to the other network
-            self.net = 1 - self.net
+        if random.random() < 0.004:         # roam to the next network
+            self.net = (self.net + 1) % len(NETWORKS)
 
         self.nr_up = random.random() > NR_DROP_RATE
         # Dropping to 3G takes the NR leg with it, the way it does in life.

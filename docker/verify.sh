@@ -23,6 +23,9 @@ fail=0
 ok()   { echo "  [OK] $1";   pass=$((pass + 1)); }
 bad()  { echo "  [FAIL] $1"; fail=$((fail + 1)); }
 check() { if [ "$1" = "1" ]; then ok "$2"; else bad "$2${3:+: $3}"; fi; }
+# Not a pass: a check whose precondition never occurred proved nothing, and
+# counting it as one would let the total claim more than was tested.
+skip() { echo "  [SKIP] $1"; }
 
 # InfluxQL through the v1 compatibility endpoint -- the same path Grafana
 # takes, so a DBRP problem shows up here rather than in a blank panel.
@@ -114,6 +117,34 @@ for t in cell_id pci tac arfcn; do
         && check 0 "$t is NOT a tag on quectel_lte (unbounded)" \
         || check 1 "$t is NOT a tag on quectel_lte (unbounded)"
 done
+
+# Carriers are the exception, and the reason is collision rather than
+# grouping: several secondaries share one poll, and two on the same band used
+# to share a series key, so the second write replaced the first. arfcn in the
+# key is what keeps both.
+for m in quectel_carrier_pcc quectel_carrier_scc; do
+    ctags=$(iql systemhealth "SHOW TAG KEYS FROM $m" | values)
+    echo "$ctags" | grep -qx arfcn \
+        && check 1 "arfcn is a tag on $m (carriers share a poll)" \
+        || check 0 "arfcn is a tag on $m (carriers share a poll)"
+done
+
+# The collision itself, where the stack has produced one. Only the synthetic
+# network (QUECTEL_NETWORK=2) runs two B3 secondaries, at 1350 and 1850; on
+# the old tags InfluxDB kept 1850 alone. Roaming reaches it eventually, so on
+# a default run this usually has nothing to test -- and says so.
+b3=$(iql systemhealth "SELECT count(rsrp) FROM quectel_carrier_scc WHERE band='3' AND rat='lte' AND time > now() - 1h GROUP BY arfcn" \
+     | python3 -c 'import json,sys
+for r in json.load(sys.stdin).get("results",[]):
+    for s in r.get("series",[]): print(s.get("tags",{}).get("arfcn",""))' 2>/dev/null)
+if echo "$b3" | grep -qx 1350 || echo "$b3" | grep -qx 1850; then
+    { echo "$b3" | grep -qx 1350 && echo "$b3" | grep -qx 1850; } \
+        && check 1 "two secondaries on one band are both kept" \
+        || check 0 "two secondaries on one band are both kept" \
+                 "only arfcn $(echo "$b3" | grep -x '1350\|1850') survived"
+else
+    skip "two secondaries on one band (synthetic network not visited; QUECTEL_NETWORK=2)"
+fi
 
 # ...but they are still queryable, which is the other half of the bargain.
 fields=$(iql systemhealth "SHOW FIELD KEYS FROM quectel_lte" | values | cut -f1)

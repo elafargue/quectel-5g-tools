@@ -39,16 +39,24 @@ variables.
 
 A pipeline fed a constant produces flat lines that prove nothing. This one
 moves: a slow random walk with a long swell under it, handovers to new sites,
-a roam between KT Korea and Free Mobile France, a neighbour list that turns
-over, and an NR leg that comes and goes.
+a roam across three networks, a neighbour list that turns over, an NR leg
+that comes and goes, and the occasional drop to 3G.
 
-Values and shapes come from the real captures in `tests/test-parser` — nothing
-is invented but the noise. Two knobs in `compose.yml` are worth turning:
+Values and shapes come from the real captures in `tests/test-parser` — KT
+Korea and Free Mobile France — and nothing is invented but the noise, with one
+exception labelled as such in `serve.py`: a third network with two secondaries
+on the same band, which no capture has shown and which is the only thing that
+exercises the carrier series key. Knobs in `compose.yml` worth turning:
 
 - `FAIL_RATE` — how often it answers `{"error": "cannot read modem"}` instead
   of a reading. Watch the graphs go to gaps rather than to zero.
 - `NR_DROP_RATE` — how often the NR leg is detached. Every LTE metric stays
   healthy through it, which is the whole reason `5g-watchdog` exists.
+- `WCDMA_RATE` — how often it answers as a 3G attach: no LTE cell, no NR, no
+  carriers. The connection-mode panel should show 3G, not a gap.
+- `QUECTEL_NETWORK` — which network to start on (0 KT, 1 Free, 2 synthetic).
+  Roaming is rare, so a check that needs one network wants this rather than a
+  wait: `QUECTEL_NETWORK=2 docker compose up -d fake-router`.
 
 ## verify.sh is the point
 

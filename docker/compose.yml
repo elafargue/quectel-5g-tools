@@ -39,6 +39,9 @@ services:
       # How often it answers as a 3G (WCDMA) attach. Real on this link, and
       # the state the toolkit handled worst until it was given one.
       WCDMA_RATE: "0.08"
+      # Network to start on: 0 KT, 1 Free, 2 the synthetic two-B3-secondaries
+      # case. Roaming moves on from it, just rarely.
+      NETWORK: "${QUECTEL_NETWORK:-0}"
     ports:
       - "${QUECTEL_ROUTER_PORT:-18080}:8080"
 
