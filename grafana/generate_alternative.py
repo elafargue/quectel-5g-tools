@@ -808,7 +808,7 @@ def _validate(panels: list, seen: set | None = None) -> None:
 
 
 def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
-                    short_uid: str, include_inputs: bool) -> dict:
+                    short_uid: str) -> dict:
     # The two InfluxDB uids must differ, and nothing downstream would say so.
     # quectel_neighbour is namedrop'd out of the main bucket by
     # telegraf/quectel.conf, so pointing the neighbour panel at the main
@@ -868,22 +868,48 @@ def build_dashboard(influx_uid: str, infinity_uid: str, url: str,
         "links": [],
     }
 
-    if include_inputs:
-        dash["__inputs"] = [
-            {"name": "DS_INFLUXDB", "label": INFLUX_PLUGIN_NAME,
-             "description": "InfluxDB, queried with InfluxQL",
-             "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
-             "pluginName": INFLUX_PLUGIN_NAME},
-            {"name": "DS_INFLUXDB_SHORT", "label": INFLUX_PLUGIN_NAME + " (short)",
-             "description": "InfluxDB database holding the short-retention "
-                            "neighbour bucket",
-             "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
-             "pluginName": INFLUX_PLUGIN_NAME},
-            {"name": "DS_INFINITY", "label": INFINITY_PLUGIN_NAME,
-             "description": "Infinity, for the live status endpoint",
-             "type": "datasource", "pluginId": INFINITY_PLUGIN_ID,
-             "pluginName": INFINITY_PLUGIN_NAME},
-        ]
+    # An __inputs entry per uid still left as a placeholder, rather than the
+    # whole block or none of it.
+    #
+    # It used to be all-or-nothing: __inputs was emitted only when all three
+    # uids were at their defaults. --influxdb-short-uid arrived after the
+    # other two flags, which quietly turned the two-flag invocation the README
+    # documented into a broken dashboard -- the short uid stayed the literal
+    # string "${DS_INFLUXDB_SHORT}", and with no __inputs entry to resolve it
+    # Grafana cannot match that to a datasource and falls back to the default
+    # one. The neighbour panel lands on the main bucket, where
+    # quectel_neighbour is deliberately absent, and reads "No data" with
+    # nothing anywhere to say why.
+    #
+    # The placeholder string is its own marker: a uid still equal to its
+    # DEFAULT_*_INPUT was never bound and so needs an import prompt, and one
+    # that was bound needs no entry. Binding some and being asked for the
+    # rest is a legitimate thing to want, and either way no ${...} can now
+    # reach a dashboard without an __inputs entry that resolves it.
+    declared = [
+        spec for uid, spec in (
+            (influx_uid,
+             {"name": "DS_INFLUXDB", "label": INFLUX_PLUGIN_NAME,
+              "description": "InfluxDB, queried with InfluxQL",
+              "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
+              "pluginName": INFLUX_PLUGIN_NAME}),
+            (short_uid,
+             {"name": "DS_INFLUXDB_SHORT",
+              "label": INFLUX_PLUGIN_NAME + " (short)",
+              "description": "InfluxDB database holding the short-retention "
+                             "neighbour bucket",
+              "type": "datasource", "pluginId": INFLUX_PLUGIN_ID,
+              "pluginName": INFLUX_PLUGIN_NAME}),
+            (infinity_uid,
+             {"name": "DS_INFINITY", "label": INFINITY_PLUGIN_NAME,
+              "description": "Infinity, for the live status endpoint",
+              "type": "datasource", "pluginId": INFINITY_PLUGIN_ID,
+              "pluginName": INFINITY_PLUGIN_NAME}),
+        ) if uid == "${" + spec["name"] + "}"
+    ]
+
+    if declared:
+        dash["__inputs"] = declared
         dash["__requires"] = [
             {"type": "grafana", "id": "grafana", "name": "Grafana",
              "version": "11.0.0"},
@@ -911,14 +937,10 @@ def main() -> int:
                          "InfluxQL one carries only a single database)")
     args = ap.parse_args()
 
-    # Explicit uids mean the dashboard is bound to one instance, so the import
-    # prompt would have nothing to ask about.
-    include_inputs = (args.influxdb_uid == DEFAULT_INFLUX_INPUT
-                      and args.infinity_uid == DEFAULT_INFINITY_INPUT
-                      and args.influxdb_short_uid == DEFAULT_INFLUX_SHORT_INPUT)
-
+    # Which uids need an import prompt is decided per uid inside
+    # build_dashboard, from whether each is still its placeholder.
     dash = build_dashboard(args.influxdb_uid, args.infinity_uid,
-                           args.url, args.influxdb_short_uid, include_inputs)
+                           args.url, args.influxdb_short_uid)
     text = json.dumps(dash, indent=2, sort_keys=False) + "\n"
 
     if args.stdout:
