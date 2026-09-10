@@ -1,0 +1,126 @@
+#!/usr/bin/env lua
+-- Concurrent readers must share one trip to the modem.
+--
+-- The quectel-status CGI runs 5g-info once per request, and Telegraf's
+-- inputs all fire on the same tick, so several get_status() calls land at
+-- once and all miss the read cache together. Before this was fixed, each
+-- waiter queued for the port lock and, once it had the lock, re-sent the
+-- command it had been waiting on; and the lock wait is capped, so against
+-- a modem slow enough that one holder's six commands outlast it, most
+-- waiters gave up and returned failed reads. Measured with this test's
+-- fake modem, 8 concurrent runs:
+--
+--   0.15s a command: 12 AT commands on the wire where 6 were needed
+--   0.40s a command: 10 commands, and 7 of 8 runs reported failed reads
+--
+-- Real processes, a real lockfile and a pty standing in for the modem, so
+-- it needs luaposix and python3. Where either is missing it exits 77, which
+-- run-all counts as skipped rather than passed. On a Mac, run it in Alpine,
+-- which also matches OpenWrt's Lua 5.1:
+--
+--   docker run --rm -v "$PWD":/src -w /src alpine:3.20 sh -c \
+--     'apk add -q lua5.1 lua5.1-posix python3 && lua5.1 tests/test-cache-herd'
+
+package.path = "lua/?.lua;lua/?/init.lua;" .. package.path
+
+local function sh(cmd)
+    local r = os.execute(cmd)
+    return r == 0 or r == true
+end
+
+if not pcall(require, "posix") then
+    print("[SKIP] needs luaposix -- see the header for running it in Alpine")
+    os.exit(77)
+end
+if not sh("command -v python3 >/dev/null 2>&1") then
+    print("[SKIP] needs python3 for the fake modem")
+    os.exit(77)
+end
+
+local lua = arg[-1] or "lua"
+local passed, failed = 0, 0
+local function test(name, cond, detail)
+    if cond then
+        print("  [OK] " .. name); passed = passed + 1
+    else
+        print("  [FAIL] " .. name .. (detail and (": " .. detail) or ""))
+        failed = failed + 1
+    end
+end
+
+-- One get_status() in a separate process, isolated from the router's own
+-- lock and cache, writing "ok" or its errors to res.<n>.
+local CHILD = [[
+package.path = "lua/?.lua;lua/?/init.lua;" .. package.path
+local modem = require("quectel.modem")
+local tmp, n = arg[1], arg[2]
+modem.CACHE_DIR = tmp .. "/cache"
+local m = modem.new(tmp .. "/tty", 2, 2000, 15)
+m.lock_path = tmp .. "/lock"
+local st = m:get_status()
+m:close()
+local f = io.open(tmp .. "/res." .. n, "w")
+f:write(st.errors and ("errors: " .. table.concat(st.errors, "; ")) or "ok")
+f:close()
+]]
+
+local EXPECTED = { "ATI", "AT+GSN", "AT+QSPN", 'AT+QENG="servingcell"',
+                   "AT+QCAINFO", 'AT+QENG="neighbourcell"' }
+
+local function scenario(n, delay)
+    local tmp = os.tmpname(); os.remove(tmp)
+    assert(sh("mkdir -p " .. tmp))
+    local f = io.open(tmp .. "/child.lua", "w"); f:write(CHILD); f:close()
+
+    assert(sh(string.format(
+        "DELAY=%s LINK=%s/tty LOG=%s/modem.log python3 tests/fake-modem.py " ..
+        ">/dev/null 2>&1 & echo $! > %s/fm.pid", delay, tmp, tmp, tmp)))
+    for _ = 1, 50 do
+        if sh("test -e " .. tmp .. "/tty") then break end
+        sh("sleep 0.1")
+    end
+
+    sh(string.format(
+        "i=1; while [ $i -le %d ]; do %s %s/child.lua %s $i & i=$((i+1)); done; wait",
+        n, lua, tmp, tmp))
+    sh("kill $(cat " .. tmp .. "/fm.pid) 2>/dev/null")
+
+    local counts, total = {}, 0
+    local log = io.open(tmp .. "/modem.log")
+    if log then
+        for line in log:lines() do
+            counts[line] = (counts[line] or 0) + 1; total = total + 1
+        end
+        log:close()
+    end
+    local bad = {}
+    for i = 1, n do
+        local r = io.open(tmp .. "/res." .. i)
+        local out = r and r:read("*a") or "no result"
+        if r then r:close() end
+        if out ~= "ok" then bad[#bad + 1] = out end
+    end
+    sh("rm -rf " .. tmp)
+    return counts, total, bad
+end
+
+for _, case in ipairs({ { 1, 0.15 }, { 8, 0.15 }, { 8, 0.4 } }) do
+    local n, delay = case[1], case[2]
+    print(string.format("%d concurrent reader(s), modem answering in %.2fs:", n, delay))
+    local counts, total, bad = scenario(n, delay)
+    local repeats = {}
+    for _, cmd in ipairs(EXPECTED) do
+        if (counts[cmd] or 0) ~= 1 then
+            repeats[#repeats + 1] = string.format("%s x%d", cmd, counts[cmd] or 0)
+        end
+    end
+    test("each of the six queries reached the modem exactly once",
+        #repeats == 0 and total == #EXPECTED,
+        string.format("%d commands; %s", total, table.concat(repeats, ", ")))
+    test("every reader got a complete status", #bad == 0,
+        string.format("%d of %d failed: %s", #bad, n, bad[1] or ""))
+    print("")
+end
+
+print(string.format("Results: %d passed, %d failed", passed, failed))
+if failed > 0 then os.exit(1) end

@@ -343,6 +343,37 @@ frequencies nothing transmits on. `docker/verify.sh` runs the panel's own
 query and fails if any channel's series holds more than one frequency; it
 was checked to fail on the old grouping.
 
+## Concurrent reads share one trip to the modem
+
+The `quectel-status` CGI runs `5g-info` once per request, and Telegraf's
+inputs all fire on the same tick, so reads arrive together and all miss the
+cache at once. `send()` used to check the cache only *before* queueing for
+the port lock. Each waiter then re-sent the command it had been blocked on
+once it got the lock -- and since the lock wait is capped (`lock_wait_ms`,
+2s), against a slightly slow modem most waiters gave up and returned failed
+reads: gaps in Telegraf for a healthy modem. Measured with
+`tests/test-cache-herd`, 8 concurrent readers: 12 AT commands where 6 were
+needed at 0.15s a command; at 0.4s, 10 commands and 7 of 8 readers failed.
+
+A waiter now polls the cache while it queues -- `lock.acquire`'s `satisfied`
+hook -- and returns the moment the holder's answer lands; it checks again
+once it holds the lock, and once more if the wait times out. Same test: 6
+commands, 8 of 8 complete, at both speeds. The test fails on the old wait
+with the numbers above.
+
+It uses real processes, a real lockfile and a pty modem
+(`tests/fake-modem.py`), so it needs luaposix and python3. Without them it
+exits 77, which `run-all` counts as skipped, never as passed. On a Mac:
+
+```
+docker run --rm -v "$PWD":/src -w /src alpine:3.20 sh -c \
+  'apk add -q lua5.1 lua5.1-posix python3 && lua5.1 tests/test-cache-herd'
+```
+
+It points `modem.CACHE_DIR` and the modem's `lock_path` at a temp dir. Both
+are overridable for that reason alone: a test run on the router must never
+feed the real daemons fake replies or contend with them for the real port.
+
 ## Neighbour rows are chosen, not just printed
 
 `print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`

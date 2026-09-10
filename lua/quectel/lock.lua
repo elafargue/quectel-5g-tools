@@ -101,8 +101,14 @@ end
 --- Acquire the modem lock.
 -- Polls until the lock is free, reclaimable, or the wait elapses, so
 -- consumers racing on the same port queue instead of failing outright.
--- @param opts table: path, wait_ms, max_hold_seconds (all optional)
--- @return true on success, or nil + error message
+-- @param opts table: path, wait_ms, max_hold_seconds, satisfied (all
+--   optional). `satisfied` is a function polled after every failed
+--   attempt; if it returns a value, the wait ends there and acquire
+--   returns nil, "satisfied", value. It is for a caller that only wanted
+--   the port to fetch something another holder may be fetching already
+--   -- the read cache -- so it can stop queueing the moment that answer
+--   lands instead of waiting for a port it no longer needs.
+-- @return true on success, or nil + error message [+ satisfied value]
 function M.acquire(opts)
     opts = opts or {}
     local path = opts.path or M.DEFAULT_PATH
@@ -144,6 +150,11 @@ function M.acquire(opts)
             end
             -- Lost the race to another waiter that reclaimed first; fall
             -- through and retry on the next pass.
+        end
+
+        if opts.satisfied then
+            local value = opts.satisfied()
+            if value ~= nil then return nil, "satisfied", value end
         end
 
         if attempt < attempts then

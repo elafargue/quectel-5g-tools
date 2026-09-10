@@ -14,6 +14,10 @@ echo ""
 
 PASSED=0
 FAILED=0
+# Exit 77 means the test could not run here -- a missing dependency, not a
+# defect -- and is counted apart. A skip counted as a pass would let the
+# summary claim coverage it does not have.
+SKIPPED=0
 
 # Find and run all test scripts
 for test_script in tests/test-*; do
@@ -24,15 +28,21 @@ for test_script in tests/test-*; do
             PASSED=$((PASSED + 1))
             echo ""
         else
-            FAILED=$((FAILED + 1))
-            echo "[FAILED]"
+            rc=$?
+            if [ "$rc" -eq 77 ]; then
+                SKIPPED=$((SKIPPED + 1))
+                echo "[SKIPPED]"
+            else
+                FAILED=$((FAILED + 1))
+                echo "[FAILED]"
+            fi
             echo ""
         fi
     fi
 done
 
 echo "========================================"
-echo "Summary: $PASSED passed, $FAILED failed"
+echo "Summary: $PASSED passed, $FAILED failed, $SKIPPED skipped"
 echo "========================================"
 
 if [ "$FAILED" -gt 0 ]; then

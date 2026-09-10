@@ -42,7 +42,10 @@ local LOCK_WAIT_MS_DEFAULT = 2000
 -- file and never touches the lock. Cell metrics don't move meaningfully
 -- inside one TTL, and the modem is doing the same measurement averaging
 -- internally regardless of how often we ask.
-local CACHE_DIR = "/var/run/quectel-at-cache"
+-- A module field rather than a constant so tests can point it elsewhere:
+-- a test that shared this directory on a router would feed the real
+-- daemons its fake replies for a whole TTL.
+M.CACHE_DIR = "/var/run/quectel-at-cache"
 local CACHE_TTL_DEFAULT = 5
 
 -- Only read-only queries are shareable. Anything that sets state must
@@ -68,7 +71,7 @@ local function is_cacheable(cmd)
 end
 
 local function cache_path(cmd)
-    return CACHE_DIR .. "/" .. cmd:gsub("[^%w]", "_")
+    return M.CACHE_DIR .. "/" .. cmd:gsub("[^%w]", "_")
 end
 
 -- Entries are "<unix-ts>\n<raw response>". Stamping the timestamp inside
@@ -86,7 +89,7 @@ local function cache_get(cmd, ttl)
 end
 
 local function cache_put(cmd, response)
-    posix.mkdir(CACHE_DIR)  -- ignore error if exists
+    posix.mkdir(M.CACHE_DIR)  -- ignore error if exists
     local path = cache_path(cmd)
     local tmp = path .. ".tmp"
     local f = io.open(tmp, "w")
@@ -103,11 +106,11 @@ end
 -- answer and report the wrong outcome.
 local function cache_invalidate()
     if type(posix.dir) ~= "function" then return end
-    local ok, names = pcall(posix.dir, CACHE_DIR)
+    local ok, names = pcall(posix.dir, M.CACHE_DIR)
     if not ok or type(names) ~= "table" then return end
     for _, name in ipairs(names) do
         if name ~= "." and name ~= ".." then
-            os.remove(CACHE_DIR .. "/" .. name)
+            os.remove(M.CACHE_DIR .. "/" .. name)
         end
     end
 end
@@ -136,25 +139,34 @@ function M.new(device, timeout, lock_wait_ms, cache_ttl, lock_max_hold_seconds)
     self.lock_max_hold_seconds = lock_max_hold_seconds
     self.fd = nil
     self.has_lock = false
+    -- nil means quectel.lock's default. Set by tests, for the same reason
+    -- M.CACHE_DIR is a field: a test must never contend with the router's
+    -- own daemons for the real port.
+    self.lock_path = nil
     return self
 end
 
 --- Open the serial port
+-- @param satisfied Optional function polled while queueing for the lock;
+--   see quectel.lock. If it returns a value, open() gives up the wait and
+--   returns nil, "satisfied", value without ever taking the port.
 -- @return true on success, nil + error on failure
-function M:open()
+function M:open(satisfied)
     -- Acquire lock first
-    local ok, lock_err = lock.acquire({
+    local ok, lock_err, value = lock.acquire({
+        path = self.lock_path,
         wait_ms = self.lock_wait_ms,
         max_hold_seconds = self.lock_max_hold_seconds,
+        satisfied = satisfied,
     })
     if not ok then
-        return nil, lock_err
+        return nil, lock_err, value
     end
     self.has_lock = true
 
     local fd, err = posix.open(self.device, posix.O_RDWR + posix.O_NOCTTY + posix.O_NONBLOCK)
     if not fd then
-        lock.release()
+        lock.release({ path = self.lock_path })
         self.has_lock = false
         return nil, "Failed to open " .. self.device .. ": " .. (err or "unknown error")
     end
@@ -183,7 +195,7 @@ function M:close()
         self.fd = nil
     end
     if self.has_lock then
-        lock.release()
+        lock.release({ path = self.lock_path })
         self.has_lock = false
     end
 end
@@ -202,8 +214,34 @@ function M:send(command)
     end
 
     if not self.fd then
-        local ok, err = self:open()
-        if not ok then return nil, err end
+        -- Queueing for the port, while whoever holds it may well be asking
+        -- the modem this very question: concurrent requests arrive together
+        -- -- Telegraf's inputs share a tick -- and all miss the cache at once.
+        -- So poll the cache while waiting, and stop the moment the answer
+        -- lands. Measured with 8 concurrent 5g-info runs against a fake modem
+        -- before this: 12 AT commands on the wire where 6 were needed at
+        -- 0.15s a command, and at 0.4s, 7 of the 8 ran out the lock wait and
+        -- returned failed reads -- gaps in Telegraf, for a modem that was
+        -- fine. tests/test-cache-herd holds both.
+        local ok, err, hit = self:open(cacheable and function()
+            return cache_get(command, self.cache_ttl)
+        end or nil)
+        if hit then return hit end
+        if not ok then
+            -- Timed out, but the answer may have landed since the last poll.
+            if cacheable then
+                local late = cache_get(command, self.cache_ttl)
+                if late then return late end
+            end
+            return nil, err
+        end
+        -- Holding the port now. If someone fetched this while we queued, use
+        -- theirs rather than asking again -- before this check every waiter
+        -- re-sent its first command once it got the lock.
+        if cacheable then
+            local fresh = cache_get(command, self.cache_ttl)
+            if fresh then return fresh end
+        end
     end
 
     -- Send command
