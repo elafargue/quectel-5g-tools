@@ -2061,6 +2061,105 @@
         }
       },
       "id": 20
+    },
+    {
+      "type": "state-timeline",
+      "title": "Connection mode",
+      "description": "Which radio technology the modem was actually attached to, as blocks over time. One row per technology; a row that stops is a technology it left.\n\n- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR at all**, so the SINR panels and `5g-monitor`'s beeps go quiet rather than wrong while it lasts. Signal is reported as RSCP and Ec/Io instead, which are related to RSRP and RSRQ but are not the same quantities.\n- **4G LTE** -- LTE with no 5G leg attached.\n- **5G NSA** -- 5G riding on an LTE anchor, the usual case.\n- **5G SA** -- standalone 5G, no LTE underneath.\n\n**Gaps are not a technology.** A break means no sample arrived for that interval -- the router was unreachable or the modem could not be read -- which is a different thing from being attached to nothing, and neither is drawn as a mode.\n\nRecorded by the router rather than inferred here: on a 3G attach the modem reports no LTE and no NR serving cell, so guessing the technology from which measurements exist would call a working link no reading at all.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "refId": "A",
+          "query": "SELECT last(\"technology\") FROM \"quectel_serving\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "Mode"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "insertNulls": false,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "WCDMA": {
+                  "text": "3G",
+                  "color": "red",
+                  "index": 0
+                },
+                "LTE": {
+                  "text": "4G LTE",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "NSA": {
+                  "text": "5G NSA",
+                  "color": "green",
+                  "index": 2
+                },
+                "SA": {
+                  "text": "5G SA",
+                  "color": "blue",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "center",
+        "rowHeight": 0.9,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "id": 21
     }
   ],
   "time": {

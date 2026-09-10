@@ -57,6 +57,16 @@ RSRP_STEPS = [("red", None), ("orange", -100), ("yellow", -90), ("green", -80)]
 RSRQ_STEPS = [("red", None), ("orange", -15), ("yellow", -12), ("green", -10)]
 SINR_STEPS = [("red", None), ("orange", 0), ("yellow", 13), ("green", 20)]
 
+# Connection mode is a category, not a measurement, so it gets value mappings
+# rather than thresholds: a colour per technology, ordered worst to best so
+# the timeline reads at a glance without consulting a legend.
+TECH_COLOURS = [
+    ("WCDMA", "3G", "red"),
+    ("LTE", "4G LTE", "yellow"),
+    ("NSA", "5G NSA", "green"),
+    ("SA", "5G SA", "blue"),
+]
+
 
 # ---------------------------------------------------------------------------
 # glossary
@@ -307,7 +317,7 @@ def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
 
 
 def state_timeline(title, gridpos, targets, ds, thresholds=None,
-                   description="") -> dict:
+                   description="", mappings=None) -> dict:
     return {
         "type": "state-timeline",
         "title": title,
@@ -322,7 +332,7 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
                            "insertNulls": False,
                            "hideFrom": {"legend": False, "tooltip": False,
                                         "viz": False}},
-                "mappings": [],
+                "mappings": mappings or [],
                 "color": {"mode": "continuous-GrYlRd"},
                 "thresholds": steps(thresholds) if thresholds else {
                     "mode": "absolute", "steps": [{"color": "green",
@@ -710,6 +720,58 @@ def build_panels(iu: str, fu: str, url: str, su: str) -> list:
             "ranged. A line dropping to the bottom of the chart is the modem "
             "trading speed for reach, which is usually the right call and "
             "always worth knowing about.")))
+
+    # -- Connection mode ----------------------------------------------------
+    #
+    # What the modem was attached to over time, as blocks. Reads
+    # quectel_serving, which exists precisely so this question does not have
+    # to be answered by inference: a 3G attach reports neither an LTE nor an
+    # NR serving cell, so deriving the technology from which of those
+    # measurements turned up files a working 3G link as "no reading" --
+    # indistinguishable from an unreachable router, which is the one thing
+    # this toolkit refuses to confuse.
+    #
+    # One row, not one per technology: the technology is the plotted *value*,
+    # and the value mappings below turn each string into a label and a colour.
+    # That needs technology to be a field rather than a tag -- a tag can only
+    # be a series name, which would have made this a row per technology with
+    # some other field plotted inside it. quectel_serving carries no tags for
+    # exactly this reason.
+    #
+    # last(), not mean(): it is a string.
+    #
+    # fill(none) for the usual reason -- a bucket with no poll in it is a gap,
+    # not a technology.
+    panels.append(state_timeline(
+        "Connection mode", gp(0, 42, 24, 6),
+        [iql(iu, "A",
+             'SELECT last("technology") FROM "quectel_serving" '
+             'WHERE $timeFilter GROUP BY time($__interval) fill(none)',
+             "Mode")],
+        influx(iu),
+        description=(
+            "Which radio technology the modem was actually attached to, as "
+            "blocks over time. One row per technology; a row that stops is a "
+            "technology it left.\n\n"
+            "- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR "
+            "at all**, so the SINR panels and `5g-monitor`'s beeps go quiet "
+            "rather than wrong while it lasts. Signal is reported as RSCP and "
+            "Ec/Io instead, which are related to RSRP and RSRQ but are not "
+            "the same quantities.\n"
+            "- **4G LTE** -- LTE with no 5G leg attached.\n"
+            "- **5G NSA** -- 5G riding on an LTE anchor, the usual case.\n"
+            "- **5G SA** -- standalone 5G, no LTE underneath.\n\n"
+            "**Gaps are not a technology.** A break means no sample arrived "
+            "for that interval -- the router was unreachable or the modem "
+            "could not be read -- which is a different thing from being "
+            "attached to nothing, and neither is drawn as a mode.\n\n"
+            "Recorded by the router rather than inferred here: on a 3G attach "
+            "the modem reports no LTE and no NR serving cell, so guessing the "
+            "technology from which measurements exist would call a working "
+            "link no reading at all."),
+        mappings=[{"type": "value", "options": {
+            v: {"text": t, "color": c, "index": i}
+            for i, (v, t, c) in enumerate(TECH_COLOURS)}}]))
 
     return panels
 

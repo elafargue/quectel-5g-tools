@@ -278,6 +278,25 @@ length**, differing in where PSC and RSCP sit — and nothing in the line says
 which is in use. Recording less beats recording a reselection threshold as a
 signal strength. Test 24 holds both directions.
 
+## Connection mode is recorded, not inferred
+
+`utils.add_technology()` sets `serving.technology` to `WCDMA`, `LTE`, `NSA` or
+`SA`, and leaves it nil when the serving read failed or found no cell. Telegraf
+writes it as `quectel_serving`, and the dashboard's *Connection mode*
+state-timeline plots it.
+
+It is computed on the router rather than derived in a dashboard query because
+inference from which measurements exist cannot work: a 3G attach writes
+neither `quectel_lte` nor `quectel_nr5g`, so "no LTE row and no NR row" means
+both *3G* and *the poll failed*. Those must not look alike.
+
+`technology` is a **field, not a tag**. A state timeline plots one row whose
+value changes colour over time, and a value comes from a field; as a tag it
+could only be a series name, giving a row per technology with nothing plotted
+in it — an empty panel with no error. `quectel_serving` therefore carries no
+tags at all, and `docker/verify.sh` asserts that, since nothing else would
+catch it.
+
 ## Neighbour rows are chosen, not just printed
 
 `print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`
