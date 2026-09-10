@@ -732,6 +732,14 @@ def build_panels(iu: str, su: str, window: str,
     # averages those per bucket. The inner query keeps fill(none): its empty
     # buckets are the gaps between polls, not missing readings.
     #
+    # Stacked. Per-poll counting cannot produce a zero: a poll that heard no
+    # inter-frequency neighbours has no inter points to count, so inter shows
+    # a gap -- 295 of 361 minutes on the boat, nearly all of them polls that
+    # did happen, while intra carried on. Drawn side by side that reads as
+    # missing data. Stacked, the top of the stack is the total heard: an
+    # inter gap leaves intra as the top, which is the right total, and a poll
+    # that returned nothing still blanks both.
+    #
     # fill(null), not fill(0) and not fill(none). With the minimum interval at
     # one poll, a bucket without a sample really had none: fill(null) draws it
     # as a break. fill(0) would draw it as "no neighbours" -- a measurement
@@ -748,18 +756,22 @@ def build_panels(iu: str, su: str, window: str,
              ') WHERE $timeFilter '
              'GROUP BY time($__interval), "scope" fill(null)',
              "$tag_scope")],
-        influx(su), fill=30,
+        influx(su), fill=30, stack=True,
         description=(
             "How many neighbouring cells the modem could hear at each poll, "
             "split into `intra` (same frequency as the serving cell) and "
-            "`inter` (a different one). The cells themselves are listed in "
-            "*Neighbour cells* at the top of the dashboard.\n\n"
+            "`inter` (a different one), **stacked, so the top of the stack is "
+            "the total heard**. The cells themselves are listed in *Neighbour "
+            "cells* at the top of the dashboard.\n\n"
             "**A thinning count is an early warning of running out of "
             "coverage, and it usually moves before RSRP does** -- you lose "
             "the alternatives before you lose the cell you are on.\n\n"
-            "Gaps are polls that returned no sample, drawn as a break rather "
-            "than as zero: no neighbours reported and no reading taken are "
-            "different things.\n\n"
+            "**A gap in `inter` while `intra` carries on means no neighbours "
+            "were heard on other frequencies** -- there are none to count, so "
+            "there is no line, and the top of the stack is `intra` alone, "
+            "which is the right total. A gap in both is a poll that returned "
+            "nothing: the router or the modem could not be read, which is "
+            "not the same as hearing no one.\n\n"
             "At wider zoom each point averages the polls inside it, so 3.5 "
             "means it heard 3 and 4 by turns.\n\n"
             "Kept for 24 hours only -- neighbour lists churn constantly on a "

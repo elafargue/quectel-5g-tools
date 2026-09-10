@@ -1624,7 +1624,7 @@
     {
       "type": "timeseries",
       "title": "Neighbours reported",
-      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one). The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nGaps are polls that returned no sample, drawn as a break rather than as zero: no neighbours reported and no reading taken are different things.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
+      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one), **stacked, so the top of the stack is the total heard**. The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\n**A gap in `inter` while `intra` carries on means no neighbours were heard on other frequencies** -- there are none to count, so there is no line, and the top of the stack is `intra` alone, which is the right total. A gap in both is a poll that returned nothing: the router or the modem could not be read, which is not the same as hearing no one.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1672,7 +1672,7 @@
             "insertNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"

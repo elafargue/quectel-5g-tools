@@ -385,6 +385,18 @@ if n==0: print("no values to check")
               || check 0 "Neighbours reported counts neighbours, not points" \
                        "$(echo "$nbc" | head -3 | tr '\n' ';')"
 
+# ...and stacked. Per-poll counting cannot draw a zero, so a poll that heard
+# no inter-frequency neighbours leaves an inter gap; side by side that reads
+# as missing data, stacked the top is still the right total.
+nbstack=$(printf '%s' "$dash" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: sys.exit(0)
+for p in d.get("panels",[]):
+    if p.get("title")=="Neighbours reported":
+        print(p["fieldConfig"]["defaults"]["custom"].get("stacking",{}).get("mode",""))' 2>/dev/null)
+[ "$nbstack" = "normal" ] && check 1 "Neighbours reported stacks its scopes" \
+                         || check 0 "Neighbours reported stacks its scopes" "stacking mode '${nbstack:-none found}'"
+
 # History panels must end where the data ends. With fill(none) a missing
 # carrier produces no null, Grafana's join leaves an *undefined* in its row,
 # and both the state timeline and the line graph carry on across it -- on the
