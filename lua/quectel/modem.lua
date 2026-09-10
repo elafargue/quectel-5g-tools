@@ -459,6 +459,7 @@ function M:get_status()
 
     utils.add_frequency_info(status)
     utils.add_cell_identity(status)
+    utils.add_technology(status)
     utils.backfill_from_serving(status)
 
     if #errors > 0 then
@@ -490,6 +491,7 @@ function M:get_signal_status()
 
     utils.add_frequency_info(status)
     utils.add_cell_identity(status)
+    utils.add_technology(status)
     utils.backfill_from_serving(status)
 
     return status

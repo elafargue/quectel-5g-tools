@@ -546,6 +546,109 @@ test("both LTE SCCs have no uplink configured",
     kt2_ca.scc[1].ul_configured == 0 and kt2_ca.scc[2].ul_configured == 0)
 print("")
 
+-- ---------------------------------------------------------------------------
+-- Test 22: WCDMA (3G) -- DERIVED FROM THE MANUAL, NOT A LIVE CAPTURE
+-- ---------------------------------------------------------------------------
+--
+-- Every other fixture in this file is real output from a real operator, and
+-- each one turned up something the manual did not say. This one is not: the
+-- field order comes from doc/quectel-rm520n-excerpt.pdf, "AT+QENG Query
+-- Primary Serving Cell and Neighbour Cell Information", In WCDMA mode:
+--
+--   +QENG: "servingcell",<state>,"WCDMA",<MCC>,<MNC>,<LAC>,<cellID>,<uarfcn>,
+--          <PSC>,<RAC>,<RSCP>,<ecio>,<phych>,<SF>,<slot>,<speech_code>,<comMod>
+--
+-- and the values below were chosen to exercise it, not observed. What this
+-- test therefore proves is that the parser matches the manual -- worth having,
+-- since before it a 3G attach parsed to nothing at all and every consumer
+-- reported a working modem as attached to nothing. It does not prove the
+-- manual is right about this module. Replace it with a real capture when one
+-- turns up, the way Tests 19-21 were built, and expect surprises: a
+-- one-character TAC, a PCI of 0 and a six-digit cell ID all arrived that way.
+print("Test 22: WCDMA serving cell (doc-derived, not a live capture)")
+local w = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN","WCDMA",222,10,00C1,D2620E,10713,120,5,' ..
+    '-75,-9,0,3,0,0,1\n\nOK')
+
+test("state parsed", w.state == "NOCONN")
+test("wcdma cell present", w.wcdma ~= nil)
+test("no LTE cell invented", w.lte == nil)
+test("no NR cell invented", w.nr5g == nil)
+test("mode stays nil (NSA/SA is not a 3G concept)", w.mode == nil)
+test("mcc/mnc", w.wcdma.mcc == 222 and w.wcdma.mnc == 10)
+-- Hexadecimal, and kept as strings for the same reason TAC is: coercing them
+-- to numbers loses the leading zero and everything after the first letter.
+test("LAC keeps its leading zero", w.wcdma.lac == "00C1")
+test("cell id kept as a string", w.wcdma.cell_id == "D2620E")
+test("uarfcn, not arfcn", w.wcdma.uarfcn == 10713 and w.wcdma.arfcn == nil)
+test("psc", w.wcdma.psc == 120)
+test("rac", w.wcdma.rac == 5)
+-- RSCP and Ec/Io are not RSRP and RSRQ, and must not be published as them:
+-- the thresholds that colour those do not apply here.
+test("rscp, not rsrp", w.wcdma.rscp == -75 and w.wcdma.rsrp == nil)
+test("ecio, not rsrq", w.wcdma.ecio == -9 and w.wcdma.rsrq == nil)
+-- The manual lists no SINR field for WCDMA at all. Anything aiming by SINR
+-- has nothing to work with on 3G, and must not be handed a stand-in.
+test("no SINR exists in 3G", w.wcdma.sinr == nil)
+test("phych/SF/slot parsed", w.wcdma.phych == 0 and w.wcdma.sf == 3
+    and w.wcdma.slot == 0)
+test("comMod parsed", w.wcdma.commod == 1)
+
+-- 0 must survive as the number 0, not as nil: 0 is truthy in Lua, so a nil
+-- here is a genuine parse failure rather than a display quirk. Same argument
+-- as the PCI-0 neighbour in Test 19.
+test("a zero field is the number 0, not nil",
+    w.wcdma.phych == 0 and w.wcdma.slot == 0 and w.wcdma.speech_code == 0)
+
+local wtech = { serving = w }
+utils.add_technology(wtech)
+test("technology is WCDMA", wtech.serving.technology == "WCDMA")
+print("")
+
+print("Test 23: technology naming across every attach type")
+local function tech_of(serving)
+    local st = { serving = serving }
+    utils.add_technology(st)
+    return st.serving.technology
+end
+test("LTE only -> LTE", tech_of({ lte = {} }) == "LTE")
+test("LTE + NR, mode NSA -> NSA",
+    tech_of({ mode = "NSA", lte = {}, nr5g = {} }) == "NSA")
+test("NR alone, mode SA -> SA", tech_of({ mode = "SA", nr5g = {} }) == "SA")
+test("WCDMA -> WCDMA", tech_of({ wcdma = {} }) == "WCDMA")
+-- The two cases the whole toolkit is careful about. Neither is a technology,
+-- and neither may be reported as one.
+test("a cell-less serving read has no technology", tech_of({}) == nil)
+local none = {}
+utils.add_technology(none)
+test("a failed serving read has no technology",
+    none.serving == nil)
+print("")
+
+-- WCDMA neighbours are reported while camped on LTE too, so this line reaches
+-- a modem that never leaves 4G. Parsed as an LTE neighbour -- which is what
+-- used to happen -- <cell_resel_priority> becomes pci and the reselection
+-- thresholds become rsrq and rsrp: small, plausible, and strong enough to sort
+-- to the top of the five neighbours 5g-monitor shows.
+print("Test 24: a WCDMA neighbour is not an LTE neighbour")
+local mixed = parser.parse_neighbours(
+    '+QENG: "neighbourcell intra","LTE",275,280,-14,-99,-67,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell","WCDMA",10713,4,-8,-16,120,-75,-9,42\n\nOK')
+
+test("both neighbours are kept", #mixed == 2)
+test("the LTE neighbour still parses", mixed[1].rat == "lte"
+    and mixed[1].pci == 280 and mixed[1].rsrp == -99)
+test("the WCDMA neighbour is labelled wcdma", mixed[2].rat == "wcdma")
+test("its uarfcn is recorded", mixed[2].uarfcn == 10713)
+-- The manual gives two same-length WCDMA neighbour layouts that differ in
+-- where PSC and RSCP sit, and nothing in the line says which is in use.
+-- Recording nothing beats recording a reselection threshold as a signal.
+test("no pci is guessed", mixed[2].pci == nil)
+test("no rsrp is guessed", mixed[2].rsrp == nil)
+test("no rsrq is guessed", mixed[2].rsrq == nil)
+test("it is not mistaken for an LTE arfcn", mixed[2].arfcn == nil)
+print("")
+
 print("=== Results ===")
 print(string.format("Passed: %d, Failed: %d", passed, failed))
 

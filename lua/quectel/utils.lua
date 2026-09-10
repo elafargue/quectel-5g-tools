@@ -260,4 +260,45 @@ function M.backfill_from_serving(status)
     end
 end
 
+--- Name the access technology the modem is actually attached to.
+--
+-- Sets status.serving.technology to one of:
+--
+--   "WCDMA"  3G. No SINR exists in this mode at all.
+--   "LTE"    4G only.
+--   "NSA"    5G non-standalone: an LTE anchor with an NR leg on top.
+--   "SA"     5G standalone.
+--
+-- Left nil when the serving read failed or came back with no cell, which is
+-- the distinction the rest of this toolkit exists to preserve: a modem that
+-- could not be read and a modem attached to nothing must not look alike, and
+-- neither may look like a technology.
+--
+-- Derived here rather than in a dashboard query. Inferring it downstream from
+-- which measurements happen to be present cannot tell "the NR leg detached"
+-- from "the poll failed", and gets 3G wrong outright -- a WCDMA attach writes
+-- neither an LTE nor an NR row, so absence-based inference files it as no
+-- reading at all. One field, computed where the cell types are known, is both
+-- correct and testable.
+--
+-- The NSA/SA distinction is not redundant with serving.mode: mode is nil on
+-- an LTE-only attach, so a consumer reading it alone cannot separate LTE from
+-- a failed read either.
+-- @param status Status table with a serving field
+function M.add_technology(status)
+    local serving = status.serving
+    if not serving then return end
+
+    if serving.wcdma then
+        serving.technology = "WCDMA"
+    elseif serving.nr5g then
+        -- mode is what the modem said; the presence of an LTE anchor is the
+        -- cross-check. They agree in every capture we have, and if they ever
+        -- disagree the modem's own word wins.
+        serving.technology = serving.mode or (serving.lte and "NSA" or "SA")
+    elseif serving.lte then
+        serving.technology = "LTE"
+    end
+end
+
 return M

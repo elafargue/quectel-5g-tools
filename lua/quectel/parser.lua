@@ -197,6 +197,56 @@ local function parse_nr5g_sa_fields(values, o)
     }
 end
 
+-- Parse WCDMA fields from values array starting at offset o
+-- o is the index of the MCC field.
+--
+-- Field order from the RM520N AT manual (doc/quectel-rm520n-excerpt.pdf,
+-- "AT+QENG Query Primary Serving Cell and Neighbour Cell Information",
+-- In WCDMA mode):
+--
+--   +QENG: "servingcell",<state>,"WCDMA",<MCC>,<MNC>,<LAC>,<cellID>,
+--          <uarfcn>,<PSC>,<RAC>,<RSCP>,<ecio>,<phych>,<SF>,<slot>,
+--          <speech_code>,<comMod>
+--
+-- DERIVED FROM THE MANUAL, NOT FROM A LIVE CAPTURE. Every other branch here
+-- was pinned against real output from a real operator, and each time that
+-- turned up something the manual did not say: a one-character TAC, a PCI of
+-- 0, a six-digit cell ID. Treat the offsets below as the manual's claim
+-- until a 3G capture confirms them, and see tests/test-parser Test 22.
+--
+-- Three things deliberately do not reuse the LTE/NR names:
+--
+--   * `uarfcn`, not `arfcn`. UTRA-ARFCN is a different raster, and
+--     frequency.lua's tables and formulae are for E-UTRA and NR only. Naming
+--     it `arfcn` would invite a confident, wrong frequency.
+--   * `rscp` and `ecio`, not `rsrp` and `rsrq`. Received Signal Code Power
+--     and Ec/Io are related quantities but not the same ones, and the
+--     thresholds in thresholds.lua do not apply to them.
+--   * there is no SINR at all in WCDMA. The manual lists no such field, so
+--     anything aiming by SINR -- 5g-monitor's beeps, the SINR panels -- has
+--     nothing to work with on 3G. That absence is the honest answer.
+--
+-- `lac` and `cell_id` stay strings for the same reason `tac` does: they are
+-- hexadecimal, and coercing them to numbers loses leading characters.
+local function parse_wcdma_fields(values, o)
+    return {
+        mcc = tonumber(values[o]),
+        mnc = tonumber(values[o + 1]),
+        lac = values[o + 2],
+        cell_id = values[o + 3],
+        uarfcn = tonumber(values[o + 4]),
+        psc = tonumber(values[o + 5]),
+        rac = tonumber(values[o + 6]),
+        rscp = tonumber(values[o + 7]),
+        ecio = tonumber(values[o + 8]),
+        phych = tonumber(values[o + 9]),
+        sf = tonumber(values[o + 10]),
+        slot = tonumber(values[o + 11]),
+        speech_code = tonumber(values[o + 12]),
+        commod = tonumber(values[o + 13]),
+    }
+end
+
 function M.parse_serving_cell(text)
     local result = {
         state = nil,
@@ -220,6 +270,12 @@ function M.parse_serving_cell(text)
             elseif values[3] == "NR5G-SA" then
                 result.mode = "SA"
                 result.nr5g = parse_nr5g_sa_fields(values, 4)
+            elseif values[3] == "WCDMA" then
+                -- Single-line only: the manual documents no multi-line form
+                -- for WCDMA, because there is no anchor/secondary split to
+                -- express. A bare "WCDMA" continuation line is therefore not
+                -- handled, unlike LTE and NR5G-NSA which genuinely have one.
+                result.wcdma = parse_wcdma_fields(values, 4)
             end
 
         elseif cell_type == "LTE" then
@@ -362,19 +418,48 @@ function M.parse_neighbours(text)
 
         if cell_type:match("^neighbourcell") then
             local scope = cell_type:match("neighbourcell (%w+)")  -- "intra" or "inter"
-            local rat = values[2]  -- "LTE"
+            local rat = values[2]  -- "LTE" or "WCDMA"
 
-            local neighbour = {
-                scope = scope,
-                rat = rat:lower(),
-                arfcn = tonumber(values[3]),
-                pci = tonumber(values[4]),
-                rsrq = tonumber(values[5]),
-                rsrp = tonumber(values[6]),
-                rssi = tonumber(values[7]),
-            }
-
-            table.insert(neighbours, neighbour)
+            if rat == "WCDMA" then
+                -- A WCDMA neighbour is reported while camped on LTE as well
+                -- as while camped on 3G, so this line reaches us on a modem
+                -- that never leaves LTE. Falling through to the LTE layout
+                -- below is what used to happen, and it is silently wrong:
+                -- <cell_resel_priority> lands in pci and the two reselection
+                -- thresholds land in rsrq and rsrp. Small integers, entirely
+                -- plausible on screen, and strong enough that print_neighbours
+                -- would sort them to the top of the five it shows.
+                --
+                -- Only uarfcn is recorded. The manual gives two different
+                -- WCDMA neighbour layouts -- one for when the serving cell is
+                -- LTE, one for when it is WCDMA -- and they are the same
+                -- length, differing in where PSC and RSCP sit:
+                --
+                --   LTE mode:   <uarfcn>,<cell_resel_priority>,<thresh_Xhigh>,
+                --               <thresh_Xlow>,<PSC>,<RSCP>,<ecno>,<srxlev>
+                --   WCDMA mode: <uarfcn>,<srxqual>,<PSC>,<RSCP>,<ecno>,<set>,
+                --               <rank>,<srxlev>
+                --
+                -- Nothing in the line says which one it is, and this function
+                -- is not told what the serving cell is. Guessing would put a
+                -- reselection threshold in a signal field, which is the exact
+                -- failure being removed. Recording less is the honest option.
+                table.insert(neighbours, {
+                    scope = scope,
+                    rat = "wcdma",
+                    uarfcn = tonumber(values[3]),
+                })
+            else
+                table.insert(neighbours, {
+                    scope = scope,
+                    rat = rat:lower(),
+                    arfcn = tonumber(values[3]),
+                    pci = tonumber(values[4]),
+                    rsrq = tonumber(values[5]),
+                    rsrp = tonumber(values[6]),
+                    rssi = tonumber(values[7]),
+                })
+            end
         end
     end
 

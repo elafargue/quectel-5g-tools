@@ -230,6 +230,54 @@ no downlink, and their ranges would shadow the bands that do. Every FR1 band
 in Table 5.2-1 that *does* have a downlink is present, and the test enforces
 that, so a band the modem reports is always recognised.
 
+## 3G is a real state, and it used to parse to nothing
+
+`parse_serving_cell` handled `LTE`, `NR5G-NSA` and `NR5G-SA`. A WCDMA attach
+matched none of them and fell through every branch, so `serving.lte`,
+`serving.nr5g` and `serving.mode` all came back nil and only `state` survived.
+Every consumer reads that as a modem attached to nothing: `5g-info` and
+`5g-monitor` print "no signal", `get_signal_status()` refuses to emit a
+sample, and Telegraf writes neither `quectel_lte` nor `quectel_nr5g`, leaving
+a gap in InfluxDB. A working 3G link reported as no link at all — the same
+class of lie as "a failed read is not a measurement", arriving through a case
+nobody had a capture for.
+
+The WCDMA branch is **derived from `doc/quectel-rm520n-excerpt.pdf`, not from
+a live capture** — the only fixture here that is. Field order comes from the
+manual's "In WCDMA mode" form. Test 22 says so in its own comment; replace it
+when a real 3G capture turns up, and expect surprises, because every one of
+Tests 19-21 found something the manual did not mention.
+
+Three deliberate non-reuses of the LTE/NR names:
+
+- **`uarfcn`, not `arfcn`.** UTRA-ARFCN is a different raster, and
+  `frequency.lua` covers E-UTRA and NR only. Naming it `arfcn` would invite
+  `add_frequency_info()` to compute a confident, wrong frequency.
+- **`rscp`/`ecio`, not `rsrp`/`rsrq`.** Related quantities, not the same ones,
+  and `thresholds.lua` does not apply to them — so the display prints them
+  uncoloured.
+- **There is no SINR in WCDMA at all.** The manual lists no such field. So
+  `sinr_for_beeps()` returns nil on 3G and `5g-monitor` falls silent rather
+  than beeping a number that does not exist. Silence is the correct feedback
+  when there is nothing to aim by.
+
+`lac` and `cell_id` stay strings for the same reason `tac` does: they are hex,
+and coercion loses a leading zero or everything after the first letter.
+
+### WCDMA neighbours were being parsed as LTE ones
+
+The modem reports WCDMA neighbours **while camped on LTE**, so this line
+reaches a modem that never leaves 4G. It used to fall through to the LTE
+layout, which put `<cell_resel_priority>` in `pci` and the two reselection
+thresholds in `rsrq` and `rsrp` — small, plausible numbers, and strong enough
+that `print_neighbours` would sort them into the five it shows.
+
+Only `uarfcn` is recorded now. The manual gives two WCDMA neighbour layouts,
+one for an LTE serving cell and one for a WCDMA serving cell, **of the same
+length**, differing in where PSC and RSCP sit — and nothing in the line says
+which is in use. Recording less beats recording a reselection threshold as a
+signal strength. Test 24 holds both directions.
+
 ## Neighbour rows are chosen, not just printed
 
 `print_neighbours` sorts by RSRP before applying the row cap, so `5g-monitor`

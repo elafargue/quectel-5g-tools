@@ -133,6 +133,27 @@ function M.print_serving_cell(status)
 
     local lte = status.serving.lte
     local nr = status.serving.nr5g
+    local wcdma = status.serving.wcdma
+
+    -- 3G. Printed before anything else because on a WCDMA attach it is the
+    -- only cell there is, and until it was handled the whole section fell
+    -- through to "no signal" -- a modem carrying traffic reported as a modem
+    -- carrying none.
+    --
+    -- RSCP and Ec/Io are not RSRP and RSRQ and are deliberately not coloured
+    -- by thresholds meant for those; the numbers are shown plainly. There is
+    -- no SINR in WCDMA to show at all, which is why the line says so rather
+    -- than printing a blank field that reads as a missing measurement.
+    if wcdma then
+        print(string.format("\n%s[3G - WCDMA]%s LAC: %s | Cell: %s | PSC: %s",
+            M.color(M.Colors.YELLOW), M.color(M.Colors.RESET),
+            wcdma.lac or "?", wcdma.cell_id or "?", wcdma.psc or "?"))
+
+        print(string.format("  RSCP: %s dBm | Ec/Io: %s dB | SINR: n/a in 3G",
+            wcdma.rscp or "?", wcdma.ecio or "?"))
+
+        print(string.format("  UARFCN: %s", wcdma.uarfcn or "?"))
+    end
 
     if lte then
         local rsrp_q = thresholds.rsrp_quality(lte.rsrp)
@@ -177,7 +198,7 @@ function M.print_serving_cell(status)
             freq_str, nr.arfcn or "?", bw))
     end
 
-    if not lte and not nr then
+    if not lte and not nr and not wcdma then
         print("\nServing cell: no signal")
     end
 end
@@ -298,6 +319,9 @@ end
 function M.get_sinr(status)
     if not status.serving then return nil end
 
+    -- WCDMA has no SINR field at all, so a 3G attach returns nil here and
+    -- 5g-monitor falls silent rather than beeping a number that does not
+    -- exist. Silence is the correct feedback when there is nothing to aim by.
     if status.serving.nr5g and status.serving.nr5g.sinr then
         return status.serving.nr5g.sinr
     elseif status.serving.lte and status.serving.lte.sinr then
