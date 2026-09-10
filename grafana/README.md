@@ -119,39 +119,124 @@ grafana-cli plugins install yesoreyeram-infinity-datasource
 ## Generate
 
 ```bash
-# default: writes quectel-5g-alternative.json with ${DS_INFLUXDB} and
-# ${DS_INFINITY} placeholders, ready to import.
+# default: writes quectel-5g-alternative.json with three placeholders --
+# ${DS_INFLUXDB}, ${DS_INFLUXDB_SHORT} and ${DS_INFINITY} -- so importing it
+# asks for three datasources. This is the copy to check in.
 python3 generate_alternative.py
 
 # point it at the router's endpoint if it is not on 192.168.8.1
 python3 generate_alternative.py --url http://10.0.0.1/cgi-bin/quectel-status
 
-# bind to explicit datasource uids (skips the import prompt)
-python3 generate_alternative.py --influxdb-uid <uid> --infinity-uid <uid>
-
-# neighbours live under their own retention policy; name it if it is not
-# called "short"
-python3 generate_alternative.py --neighbour-rp short
+# bind to explicit datasource uids (skips the import prompt). There are
+# three, and the short-retention one is not optional -- see "Two InfluxDB
+# datasources" below for why the neighbour panel needs its own.
+python3 generate_alternative.py \
+    --influxdb-uid <main uid> \
+    --influxdb-short-uid <short-retention uid> \
+    --infinity-uid <infinity uid>
 ```
+
+Binding only some of them is fine: whichever you leave out keeps its
+placeholder and is asked for at import. Binding both InfluxDB uids to the
+same datasource is refused outright, because the neighbour panel would then
+query a measurement that is deliberately not in the main bucket and read "No
+data" with nothing to say why.
+
+### On Grafana 12 and later, bind the uids -- do not use the import prompt
+
+**Grafana 13's import page cannot map two datasource inputs of the same
+plugin.** `DS_INFLUXDB` and `DS_INFLUXDB_SHORT` are both `influxdb`; the form
+accepts a different datasource in each picker and then applies the *first*
+one's value to both. The neighbour panel silently lands on the main
+datasource, where `quectel_neighbour` is deliberately absent, and reads "No
+data". Nothing reports an error, and the picker you set is not what gets
+saved.
+
+Reproduced on 13.0.2 against a form verified to hold `DS_INFLUXDB = InfluxDB`
+and `DS_INFLUXDB_SHORT = InfluxDB (short retention)`: every panel imported
+onto `quectel-influx`, none onto `quectel-influx-short`. The same file with
+the same clicks on 11.6.11 imports correctly, and the HTTP API maps it
+correctly on both -- it is the import form, not the dashboard.
+
+So on 12 or later, generate with all three uids bound as above. That emits no
+`__inputs` at all, so there is no prompt to get wrong. Read the uids off
+`/api/datasources`:
+
+```bash
+curl -s -u admin:admin http://localhost:3000/api/datasources \
+    | python3 -c 'import json,sys
+for d in json.load(sys.stdin): print(d["uid"], d["name"])'
+```
+
+If you have already imported one the broken way, the repair is to open
+*Neighbours reported*, set its datasource to the short-retention one, and
+save -- or re-import a uid-bound copy over it.
 
 The generator validates its own output before writing — duplicate panel ids,
 panels running past column 24, targets without a `refId`, and targets pointing
 at a different datasource than their panel. Grafana answers all four with a
 blank panel and no error message.
 
-## InfluxDB 2.x with InfluxQL
+## Two InfluxDB datasources, because there are two databases
 
-Querying 2.x with InfluxQL needs a DBRP mapping per retention policy, so the
-`"short"."quectel_neighbour"` in the neighbour panel resolves to the right
-bucket:
+Retention in InfluxDB 2.x belongs to the bucket, not to the measurement, so
+neighbours -- whose `(pci, arfcn)` series turn over continuously on a moving
+vessel -- live in a bucket that expires in a day while everything else is
+kept. [`telegraf/quectel.conf`](../telegraf/quectel.conf) routes
+`quectel_neighbour` there and `namedrop`s it from the main bucket.
+
+A Grafana InfluxQL datasource carries exactly one database and no way to name
+a retention policy per panel. The `"short"."quectel_neighbour"` qualification
+that would have avoided a second datasource **is not honoured by 2.x's v1
+compatibility layer** -- it answers with no series and no error at all. So the
+short bucket has to be reachable as a database in its own right, and the
+dashboard points a second datasource at it.
+
+**Check before creating any mapping — you probably need none.** InfluxDB
+auto-generates a read-only *virtual* DBRP for every bucket that has no
+explicit one, with the database named after the bucket and `autogen` as the
+default policy. That is exactly what this dashboard queries, so on a stock
+2.x both databases already answer:
 
 ```bash
-influx v1 dbrp create --db boat --rp autogen --bucket-id <boat bucket id> --default
-influx v1 dbrp create --db boat --rp short   --bucket-id <short bucket id>
+influx v1 dbrp list
 ```
 
-The Grafana datasource then wants Query Language = InfluxQL, the database name
-(`boat`), and a v1-compatible auth or token.
+Look for `systemhealth` and `systemhealth_short` in either table. If they are
+under `VIRTUAL DBRP MAPPINGS (READ-ONLY)`, there is nothing to do. Only if a
+bucket is missing from both — an older 2.x predating virtual mappings — create
+it explicitly:
+
+```bash
+influx bucket list                       # note the two bucket ids
+influx v1 dbrp create --db systemhealth --rp autogen \
+    --bucket-id <systemhealth id> --default
+influx v1 dbrp create --db systemhealth_short --rp autogen \
+    --bucket-id <systemhealth_short id> --default
+```
+
+Note that creating an explicit mapping *replaces* the bucket's virtual one, so
+a half-finished set is worse than none: `docker/` creates all of them together
+for that reason. A `--db systemhealth --rp short` mapping belonged to an
+earlier design that qualified the measurement; nothing queries it now.
+
+And two Grafana datasources, both Query Language = InfluxQL with a
+v1-compatible auth or token:
+
+| Grafana datasource | Database             | Used by                    |
+|--------------------|----------------------|----------------------------|
+| main               | `systemhealth`       | every InfluxQL panel but one |
+| short retention    | `systemhealth_short` | *Neighbours reported*      |
+
+`docker/` builds exactly this, in
+[`docker/influxdb/init/10-buckets-and-dbrp.sh`](../docker/influxdb/init/10-buckets-and-dbrp.sh)
+and
+[`docker/grafana/provisioning/datasources/datasources.yml`](../docker/grafana/provisioning/datasources/datasources.yml),
+and `docker/verify.sh` asserts the neighbour panel is actually wired to the
+second one -- provisioned is not the same as wired up.
+
+**If *Neighbours reported* is empty and every other panel works**, this is
+where to look: the panel is on the main datasource. Open it and check.
 
 ## Thresholds
 

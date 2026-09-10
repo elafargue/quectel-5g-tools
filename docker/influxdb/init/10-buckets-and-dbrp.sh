@@ -26,7 +26,11 @@ MAIN=$(bucket_id systemhealth)
 SHORT=$(bucket_id systemhealth_short)
 
 # db + retention policy -> bucket. "autogen" is what an unqualified InfluxQL
-# query resolves to; the dashboard's neighbour panel names "short" explicitly.
+# query resolves to, which is what every panel uses. The --rp short mapping
+# below is vestigial: it served an earlier design in which the neighbour panel
+# qualified the measurement as "short"."quectel_neighbour". Nothing queries it
+# now -- the panel uses the systemhealth_short database created further down --
+# and it is kept only because an existing deployment may still have it.
 influx v1 dbrp create --db systemhealth --rp autogen \
     --bucket-id "$MAIN" --default --org "$ORG" --token "$TOKEN"
 influx v1 dbrp create --db systemhealth --rp short \
