@@ -279,7 +279,8 @@ def table(title, gridpos, targets, ds, overrides=None, transformations=None,
 
 
 def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
-               fill=10, min_=None, max_=None, description="") -> dict:
+               fill=10, min_=None, max_=None, description="",
+               stack=False) -> dict:
     field: dict = {
         "custom": {
             "drawStyle": "line",
@@ -295,7 +296,8 @@ def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
             "scaleDistribution": {"type": "linear"},
             "hideFrom": {"legend": False, "tooltip": False, "viz": False},
             "insertNulls": False,
-            "stacking": {"group": "A", "mode": "none"},
+            "stacking": {"group": "A",
+                         "mode": "normal" if stack else "none"},
             "thresholdsStyle": {"mode": "off"},
         },
         "mappings": [],
@@ -729,27 +731,53 @@ def build_panels(iu: str, su: str, window: str) -> list:
             "moving vessel, so they live in a short-retention bucket of their "
             "own. Ranges longer than a day will look empty here.")))
 
-    # count() over a field, never distinct() over a tag. `band` is a tag here,
-    # and InfluxQL's distinct() does not operate on tags -- it answers with no
-    # series at all, so the panel reads "No data" while the measurement behind
-    # it is perfectly well populated. Each carrier contributes one point per
-    # poll, so counting a field it always carries counts the carriers.
+    # Carriers per poll, not points per bucket.
+    #
+    # count() over a display bucket counts every point in it, and each carrier
+    # writes one point per poll -- so this panel used to read carriers times
+    # polls, growing with the zoom: 5 to 54 on the dev stack's 5-minute
+    # buckets where the truth was 1 or 2. The inner query counts per poll
+    # instead. A poll's carriers share one timestamp exactly -- they come from
+    # one json_v2 parse -- so time(1s) buckets hold one poll each. The outer
+    # query averages those per display bucket: exact while a bucket holds one
+    # poll, and honest when it holds many, where 2.5 means time spent at both
+    # 2 and 3. Checked over 365 days on the stack: the 1s inner grouping took
+    # 0.06s and hit no bucket limit.
+    #
+    # One target per measurement, stacked. Primary and secondary carriers are
+    # separate measurements, and one query over both came back as two series
+    # both labelled "lte". Stacked, the top of the stack is the total.
+    #
+    # count() over a field, never distinct() over a tag: InfluxQL's distinct()
+    # does not operate on tags and answers with no series at all.
+    def per_poll(measurement: str, ref: str, role: str) -> dict:
+        return iql(iu, ref,
+                   'SELECT mean("n") FROM ('
+                   f'SELECT count("rsrp") AS "n" FROM "{measurement}" '
+                   'WHERE $timeFilter GROUP BY time(1s), "rat" fill(none)'
+                   ') WHERE $timeFilter '
+                   'GROUP BY time($__interval), "rat" fill(none)',
+                   "$tag_rat " + role)
+
     panels.append(timeseries(
         "Aggregated carriers", gp(0, 36, 12, 6),
-        [iql(iu, "A",
-             'SELECT count("rsrp") FROM "quectel_carrier_pcc", '
-             '"quectel_carrier_scc" WHERE $timeFilter '
-             'GROUP BY time($__interval), "rat" fill(none)',
-             "$tag_rat")],
-        influx(iu), fill=30, min_=0,
+        [per_poll("quectel_carrier_pcc", "A", "primary"),
+         per_poll("quectel_carrier_scc", "B", "secondary")],
+        influx(iu), fill=30, min_=0, stack=True,
         description=(
-            "How many carriers were bonded together at each poll, split by "
-            "technology. This is the count behind the *Connected carriers* "
-            "table at the top.\n\n"
+            "How many carriers were bonded together, split by technology and "
+            "by role -- primary or secondary -- and stacked, so the top of the "
+            "stack is the total. This is the count behind the *Connected "
+            "carriers* table at the top.\n\n"
             "More carriers means more spectrum in use and, broadly, more "
             "speed, so **a drop here often explains a slowdown that the "
             "signal panels do not** -- the network can withdraw a carrier "
-            "under load while every dB stays exactly where it was.")))
+            "under load while every dB stays exactly where it was.\n\n"
+            "At wider zoom each point averages the polls inside it, so 2.5 "
+            "means it spent time at both 2 and 3 carriers. A gap is a poll "
+            "with no carriers reported: the modem was on 3G, where there is "
+            "no aggregation, or could not be read -- *Connection mode* tells "
+            "which.")))
 
     # Frequency rather than band number: on a boat the interesting question is
     # usually whether it fell back to low band, and megahertz answers that

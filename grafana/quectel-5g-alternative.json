@@ -1711,7 +1711,7 @@
     {
       "type": "timeseries",
       "title": "Aggregated carriers",
-      "description": "How many carriers were bonded together at each poll, split by technology. This is the count behind the *Connected carriers* table at the top.\n\nMore carriers means more spectrum in use and, broadly, more speed, so **a drop here often explains a slowdown that the signal panels do not** -- the network can withdraw a carrier under load while every dB stays exactly where it was.",
+      "description": "How many carriers were bonded together, split by technology and by role -- primary or secondary -- and stacked, so the top of the stack is the total. This is the count behind the *Connected carriers* table at the top.\n\nMore carriers means more spectrum in use and, broadly, more speed, so **a drop here often explains a slowdown that the signal panels do not** -- the network can withdraw a carrier under load while every dB stays exactly where it was.\n\nAt wider zoom each point averages the polls inside it, so 2.5 means it spent time at both 2 and 3 carriers. A gap is a poll with no carriers reported: the modem was on 3G, where there is no aggregation, or could not be read -- *Connection mode* tells which.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1729,10 +1729,21 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT count(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_pcc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
           "rawQuery": true,
           "resultFormat": "time_series",
-          "alias": "$tag_rat"
+          "alias": "$tag_rat primary"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "refId": "B",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "$tag_rat secondary"
         }
       ],
       "fieldConfig": {
@@ -1759,7 +1770,7 @@
             "insertNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"

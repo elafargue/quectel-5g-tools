@@ -297,6 +297,52 @@ if n==0: print("no series to check")' 2>/dev/null)
     || check 0 "Carrier frequency plots only frequencies a carrier uses" \
              "${blend:-panel query not found}"
 
+# Aggregated carriers must count carriers, not points. count() over a bucket
+# counts one point per carrier per poll, so the old query read carriers times
+# polls -- 5 to 54 on this stack at 5-minute buckets where the truth was 1 or
+# 2 -- and a count that grows with the zoom level says nothing. The panel's
+# own queries run at 5-minute buckets, 30 of this stack's polls each, and
+# every value must lie within the per-poll maximum the raw points give. The
+# targets' aliases must differ too: one query over both measurements used to
+# return two series both called "lte".
+agg=$(printf '%s' "$dash" | INFLUX="$INFLUX" TOKEN="$TOKEN" python3 -c '
+import json,sys,os,urllib.request,urllib.parse
+from collections import Counter
+def q(s):
+    u=os.environ["INFLUX"]+"/query?"+urllib.parse.urlencode({"db":"systemhealth","q":s})
+    rq=urllib.request.Request(u,headers={"Authorization":"Token "+os.environ["TOKEN"]})
+    return json.load(urllib.request.urlopen(rq,timeout=15)).get("results",[])
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: print("no dashboard"); sys.exit()
+p=[x for x in d.get("panels",[]) if x.get("title")=="Aggregated carriers"]
+if not p: print("panel not found"); sys.exit()
+tg=p[0]["targets"]
+al=[t.get("alias") for t in tg]
+if len(set(al))!=len(al): print("duplicate aliases %s" % al)
+truth={}
+for m in ("quectel_carrier_pcc","quectel_carrier_scc"):
+    c=Counter()
+    for r in q("SELECT rsrp, rat FROM %s WHERE time > now() - 30m" % m):
+        for s in r.get("series",[]):
+            for t,_,rat in s["values"]: c[(t,rat)]+=1
+    for (t,rat),n in c.items(): truth[(m,rat)]=max(truth.get((m,rat),0),n)
+n=0
+for t in tg:
+    sq=t["query"].replace("$timeFilter","time > now() - 30m").replace("$__interval","5m")
+    for r in q(sq):
+        for s in r.get("series",[]):
+            k=(s["name"], s.get("tags",{}).get("rat"))
+            for _,val in s["values"]:
+                if val is None: continue
+                n+=1
+                if val > truth.get(k,0)+1e-9:
+                    print("%s %s: %s > per-poll max %s" % (k[0],k[1],val,truth.get(k)))
+if n==0: print("no values to check")
+' 2>&1 | sort -u)
+[ -z "$agg" ] && check 1 "Aggregated carriers counts carriers, not points" \
+              || check 0 "Aggregated carriers counts carriers, not points" \
+                       "$(echo "$agg" | head -3 | tr '\n' ';')"
+
 # The Now row, asked the way the browser asks it: the provisioned panels'
 # own queries, through Grafana. Network, Mode and RRC are present on every
 # poll the router answers -- 3G included -- so each must return a value
