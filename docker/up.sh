@@ -16,6 +16,7 @@ python3 ../grafana/generate_alternative.py \
     --influxdb-uid quectel-influx \
     --influxdb-short-uid quectel-influx-short \
     --recent-window 25s \
+    --poll-interval 10s \
     --stdout > grafana/dashboards/quectel-5g-alternative.json
 
 echo "dashboard generated; starting stack"

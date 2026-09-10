@@ -1099,7 +1099,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"rsrp\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(none)",
+          "query": "SELECT mean(\"rsrp\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "NR $tag_band"
@@ -1110,7 +1110,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "B",
-          "query": "SELECT mean(\"rsrp\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(none)",
+          "query": "SELECT mean(\"rsrp\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "LTE B$tag_band"
@@ -1192,6 +1192,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 12
     },
     {
@@ -1215,7 +1216,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"sinr\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(none)",
+          "query": "SELECT mean(\"sinr\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "NR $tag_band"
@@ -1226,7 +1227,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "B",
-          "query": "SELECT mean(\"sinr\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(none)",
+          "query": "SELECT mean(\"sinr\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval), \"band\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "LTE B$tag_band"
@@ -1308,6 +1309,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 13
     },
     {
@@ -1331,7 +1333,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"rsrq\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+          "query": "SELECT mean(\"rsrq\") FROM \"quectel_nr5g\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "NR"
@@ -1342,7 +1344,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "B",
-          "query": "SELECT mean(\"rsrq\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+          "query": "SELECT mean(\"rsrq\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "LTE"
@@ -1424,6 +1426,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 14
     },
     {
@@ -1447,7 +1450,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"role\", \"rat\", \"band\", \"arfcn\" fill(none)",
+          "query": "SELECT last(\"rsrp\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"role\", \"rat\", \"band\", \"arfcn\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_role $tag_rat $tag_band $tag_arfcn"
@@ -1509,6 +1512,7 @@
           "sort": "none"
         }
       },
+      "interval": "60s",
       "id": 15
     },
     {
@@ -1545,7 +1549,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"enodeb\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval) fill(previous)",
+          "query": "SELECT last(\"enodeb\") FROM \"quectel_lte\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "eNodeB"
@@ -1614,6 +1618,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 17
     },
     {
@@ -1637,7 +1642,7 @@
             "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(none)",
+          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
@@ -1706,6 +1711,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 18
     },
     {
@@ -1729,7 +1735,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_pcc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_pcc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat primary"
@@ -1740,7 +1746,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "B",
-          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(none)",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat secondary"
@@ -1810,6 +1816,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 19
     },
     {
@@ -1833,7 +1840,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\", \"arfcn\" fill(none)",
+          "query": "SELECT mean(\"frequency_mhz\") FROM \"quectel_carrier_pcc\", \"quectel_carrier_scc\" WHERE $timeFilter GROUP BY time($__interval), \"rat\", \"band\", \"arfcn\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_rat $tag_band $tag_arfcn"
@@ -1903,6 +1910,7 @@
           "sort": "desc"
         }
       },
+      "interval": "60s",
       "id": 20
     },
     {
@@ -1926,7 +1934,7 @@
             "uid": "${DS_INFLUXDB}"
           },
           "refId": "A",
-          "query": "SELECT last(\"technology\") FROM \"quectel_serving\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+          "query": "SELECT last(\"technology\") FROM \"quectel_serving\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "Mode"
@@ -2002,6 +2010,7 @@
           "sort": "none"
         }
       },
+      "interval": "60s",
       "id": 21
     }
   ],

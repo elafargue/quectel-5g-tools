@@ -58,6 +58,24 @@ DEFAULT_INFLUX_SHORT_INPUT = "${DS_INFLUXDB_SHORT}"
 # where 4 were current, 33 neighbours where about 7 were. --recent-window
 # sets it; docker/up.sh passes 25s for the stack's 10s polls.
 DEFAULT_RECENT_WINDOW = "75s"
+
+# Telegraf's poll interval, used as every history panel's minimum interval.
+#
+# Below one poll per bucket, fill(null) would put a null between every pair
+# of polls and the history would flicker. Above it, a bucket without a point
+# genuinely means no sample -- which is what fill(null) must be free to say.
+# fill(none) cannot say it at all: Grafana joins every row onto one time
+# axis, a row with no point at some time gets an *undefined* there, and the
+# state timeline carries a row's last state across undefined until that row
+# has another point. A carrier that left at 13:15 was drawn in use until the
+# end of the range -- on the boat's 24h view, every carrier of the day at
+# once. A line graph does the same -- points separated only by missing
+# timestamps are joined, so an NR leg detached for four hours was drawn as a
+# straight line across them -- and fill(previous) carried the last serving
+# site across any stretch without data. Polls land in the first 20s of each
+# minute on the boat, so buckets aligned on the minute hold exactly one each.
+# docker/up.sh passes 10s.
+DEFAULT_POLL_INTERVAL = "60s"
 # The InfluxQL database name, which a DBRP mapping resolves to a bucket.
 DEFAULT_DATABASE = "systemhealth"
 # Neighbours live in a shorter-lived bucket of their own; see
@@ -368,7 +386,8 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
 # panels
 # ---------------------------------------------------------------------------
 
-def build_panels(iu: str, su: str, window: str) -> list:
+def build_panels(iu: str, su: str, window: str,
+                 poll: str = DEFAULT_POLL_INTERVAL) -> list:
     """iu = InfluxDB uid, su = uid of the datasource holding the
     short-retention neighbour bucket, window = how far back the Now row looks
     for the newest poll (DEFAULT_RECENT_WINDOW explains the choice)."""
@@ -572,10 +591,10 @@ def build_panels(iu: str, su: str, window: str) -> list:
         "RSRP", gp(0, 15, 12, 8),
         [iql(iu, "A",
              'SELECT mean("rsrp") FROM "quectel_nr5g" WHERE $timeFilter '
-             'GROUP BY time($__interval), "band" fill(none)', "NR $tag_band"),
+             'GROUP BY time($__interval), "band" fill(null)', "NR $tag_band"),
          iql(iu, "B",
              'SELECT mean("rsrp") FROM "quectel_lte" WHERE $timeFilter '
-             'GROUP BY time($__interval), "band" fill(none)', "LTE B$tag_band")],
+             'GROUP BY time($__interval), "band" fill(null)', "LTE B$tag_band")],
         influx(iu), unit="dBm", thresholds=RSRP_STEPS,
         description=(
             RSRP_DOC + "\n\nOne line per band, so a handover onto different "
@@ -586,10 +605,10 @@ def build_panels(iu: str, su: str, window: str) -> list:
         "SINR", gp(12, 15, 12, 8),
         [iql(iu, "A",
              'SELECT mean("sinr") FROM "quectel_nr5g" WHERE $timeFilter '
-             'GROUP BY time($__interval), "band" fill(none)', "NR $tag_band"),
+             'GROUP BY time($__interval), "band" fill(null)', "NR $tag_band"),
          iql(iu, "B",
              'SELECT mean("sinr") FROM "quectel_lte" WHERE $timeFilter '
-             'GROUP BY time($__interval), "band" fill(none)', "LTE B$tag_band")],
+             'GROUP BY time($__interval), "band" fill(null)', "LTE B$tag_band")],
         influx(iu), unit="dB", thresholds=SINR_STEPS,
         description=(
             SINR_DOC + "\n\nWorth reading against RSRP to its left: **"
@@ -602,10 +621,10 @@ def build_panels(iu: str, su: str, window: str) -> list:
         "RSRQ", gp(0, 23, 12, 6),
         [iql(iu, "A",
              'SELECT mean("rsrq") FROM "quectel_nr5g" WHERE $timeFilter '
-             'GROUP BY time($__interval) fill(none)', "NR"),
+             'GROUP BY time($__interval) fill(null)', "NR"),
          iql(iu, "B",
              'SELECT mean("rsrq") FROM "quectel_lte" WHERE $timeFilter '
-             'GROUP BY time($__interval) fill(none)', "LTE")],
+             'GROUP BY time($__interval) fill(null)', "LTE")],
         influx(iu), unit="dB", thresholds=RSRQ_STEPS,
         description=RSRQ_DOC + "\n\n" + GAPS_DOC))
 
@@ -634,7 +653,7 @@ def build_panels(iu: str, su: str, window: str) -> list:
              'SELECT last("rsrp") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
              'GROUP BY time($__interval), "role", "rat", "band", "arfcn" '
-             'fill(none)',
+             'fill(null)',
              "$tag_role $tag_rat $tag_band $tag_arfcn")],
         influx(iu), thresholds=RSRP_STEPS,
         description=(
@@ -679,7 +698,7 @@ def build_panels(iu: str, su: str, window: str) -> list:
         "Serving site (eNodeB)", gp(0, 30, 12, 6),
         [iql(iu, "A",
              'SELECT last("enodeb") FROM "quectel_lte" WHERE $timeFilter '
-             'GROUP BY time($__interval) fill(previous)', "eNodeB")],
+             'GROUP BY time($__interval) fill(null)', "eNodeB")],
         influx(iu), fill=0,
         description=(
             "Which LTE base station is serving the modem, as its numeric "
@@ -703,17 +722,19 @@ def build_panels(iu: str, su: str, window: str) -> list:
     # here, and InfluxQL's distinct() does not operate on tags. It returns
     # nothing, silently, which is a slow way to find out.
     #
-    # fill(none), not fill(0). $__interval is sized to the panel width and is
-    # routinely finer than the poll interval, so most buckets contain no
-    # sample at all. fill(0) draws those as "no neighbours" -- a measurement
+    # fill(null), not fill(0) and not fill(none). With the minimum interval at
+    # one poll, a bucket without a sample really had none: fill(null) draws it
+    # as a break. fill(0) would draw it as "no neighbours" -- a measurement
     # nobody took, rendered as a reading of zero, which is the same lie
-    # get_status() and 5g-collectd go to some trouble to avoid.
+    # get_status() and 5g-collectd go to some trouble to avoid -- and
+    # fill(none) drew nothing at all, because Grafana carried the line across
+    # the gap. DEFAULT_POLL_INTERVAL has the detail.
     panels.append(timeseries(
         "Neighbours reported", gp(12, 30, 12, 6),
         [iql(su, "A",
              'SELECT count("rsrp") FROM "quectel_neighbour" '
              'WHERE $timeFilter GROUP BY time($__interval), "scope" '
-             'fill(none)',
+             'fill(null)',
              "$tag_scope")],
         influx(su), fill=30,
         description=(
@@ -756,7 +777,7 @@ def build_panels(iu: str, su: str, window: str) -> list:
                    f'SELECT count("rsrp") AS "n" FROM "{measurement}" '
                    'WHERE $timeFilter GROUP BY time(1s), "rat" fill(none)'
                    ') WHERE $timeFilter '
-                   'GROUP BY time($__interval), "rat" fill(none)',
+                   'GROUP BY time($__interval), "rat" fill(null)',
                    "$tag_rat " + role)
 
     panels.append(timeseries(
@@ -795,7 +816,7 @@ def build_panels(iu: str, su: str, window: str) -> list:
              'SELECT mean("frequency_mhz") FROM "quectel_carrier_pcc", '
              '"quectel_carrier_scc" WHERE $timeFilter '
              'GROUP BY time($__interval), "rat", "band", "arfcn" '
-             'fill(none)',
+             'fill(null)',
              "$tag_rat $tag_band $tag_arfcn")],
         # Grafana has no megahertz unit and "hertz" would label 1840 MHz as
         # 1840 Hz. A custom suffix is the honest option.
@@ -838,7 +859,7 @@ def build_panels(iu: str, su: str, window: str) -> list:
         "Connection mode", gp(0, 42, 24, 6),
         [iql(iu, "A",
              'SELECT last("technology") FROM "quectel_serving" '
-             'WHERE $timeFilter GROUP BY time($__interval) fill(none)',
+             'WHERE $timeFilter GROUP BY time($__interval) fill(null)',
              "Mode")],
         influx(iu),
         description=(
@@ -862,6 +883,13 @@ def build_panels(iu: str, su: str, window: str) -> list:
             "technology from which measurements exist would call a working "
             "link no reading at all."),
         mappings=[TECH_MAPPING]))
+
+    # Every history panel gets a minimum interval of one poll. It is set here
+    # rather than per panel so a new history panel cannot forget it: without
+    # it, fill(null) would break the line between every pair of polls.
+    for p in panels:
+        if any("$__interval" in t.get("query", "") for t in p.get("targets", [])):
+            p["interval"] = poll
 
     return panels
 
@@ -970,7 +998,8 @@ def _validate(panels: list, seen: set | None = None) -> None:
 
 
 def build_dashboard(influx_uid: str, short_uid: str,
-                    window: str = DEFAULT_RECENT_WINDOW) -> dict:
+                    window: str = DEFAULT_RECENT_WINDOW,
+                    poll: str = DEFAULT_POLL_INTERVAL) -> dict:
     # The two InfluxDB uids must differ, and nothing downstream would say so.
     # quectel_neighbour is namedrop'd out of the main bucket by
     # telegraf/quectel.conf, so pointing the neighbour panel at the main
@@ -993,7 +1022,7 @@ def build_dashboard(influx_uid: str, short_uid: str,
             f"pointing both at it leaves 'Neighbours reported' permanently "
             f"empty with no error to say why.")
 
-    panels = build_panels(influx_uid, short_uid, window)
+    panels = build_panels(influx_uid, short_uid, window, poll)
     _assign_ids(panels)
     _validate(panels)
 
@@ -1099,6 +1128,10 @@ def main() -> int:
                     help="write to stdout instead of the JSON file")
     ap.add_argument("--influxdb-uid", default=DEFAULT_INFLUX_INPUT,
                     help="bind to an explicit InfluxDB datasource uid")
+    ap.add_argument("--poll-interval", default=DEFAULT_POLL_INTERVAL,
+                    help="Telegraf's poll interval, the history panels' "
+                         "minimum interval: 60s as deployed (the default), "
+                         "10s for the dev stack")
     ap.add_argument("--recent-window", default=DEFAULT_RECENT_WINDOW,
                     help="how far back the Now row looks for the newest poll: "
                          "Telegraf's poll interval plus its flush_interval, "
@@ -1117,8 +1150,11 @@ def main() -> int:
     if not re.fullmatch(r"[1-9][0-9]*[smh]", args.recent_window):
         raise SystemExit(f"--recent-window must be an InfluxQL duration such "
                          f"as 75s or 2m, not {args.recent_window!r}")
+    if not re.fullmatch(r"[1-9][0-9]*[smh]", args.poll_interval):
+        raise SystemExit(f"--poll-interval must be an InfluxQL duration such "
+                         f"as 60s, not {args.poll_interval!r}")
     dash = build_dashboard(args.influxdb_uid, args.influxdb_short_uid,
-                           args.recent_window)
+                           args.recent_window, args.poll_interval)
     text = json.dumps(dash, indent=2, sort_keys=False) + "\n"
 
     if args.stdout:

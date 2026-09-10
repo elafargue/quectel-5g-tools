@@ -343,6 +343,32 @@ frequencies nothing transmits on. `docker/verify.sh` runs the panel's own
 query and fails if any channel's series holds more than one frequency; it
 was checked to fail on the old grouping.
 
+## History panels must end where the data ends
+
+Every history query in the alternative dashboard uses `fill(null)`, and every
+history panel has a minimum interval of one Telegraf poll (`--poll-interval`,
+default 60s; `docker/up.sh` passes 10s). Both halves matter.
+
+They used `fill(none)`, which returns no point at all for an empty bucket.
+Grafana joins every series onto one time axis, a series with no point at some
+time gets an *undefined* there, and both the state timeline and the line graph
+carry on across undefined -- only an explicit null ends a block or breaks a
+line. On the boat's 24h view *Carriers in use* drew every carrier of the day
+as still in use at "now" (`scc lte 8` had no point after 13:15), and RSRP drew
+the dev stack's n78 line straight across a four-hour absence. *Serving site*
+used `fill(previous)`, which does the same thing on purpose.
+
+`fill(null)` alone would break the line between every pair of polls whenever
+a bucket is shorter than the poll. The minimum interval stops that: at one
+poll per bucket, a null means no sample was taken. Boat polls land in the
+first 20s of each minute, so minute-aligned buckets hold exactly one.
+
+It is set centrally in `build_panels`, on every panel whose query groups by
+`$__interval`, so a new history panel cannot forget it; `docker/verify.sh`
+fails any that does. The inner per-poll grouping in *Aggregated carriers*
+(`time(1s)`) deliberately stays `fill(none)`: it counts carriers per poll,
+and its empty buckets are not gaps.
+
 ## Concurrent reads share one trip to the modem
 
 The `quectel-status` CGI runs `5g-info` once per request, and Telegraf's

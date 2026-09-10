@@ -289,8 +289,13 @@ for r in json.load(sys.stdin).get("results",[]):
     for s in r.get("series",[]):
         if s.get("tags",{}).get("arfcn","absent")=="": continue
         n+=1
-        v={round(x[1],1) for x in s["values"] if x[1] is not None}
-        if len(v)>1: print("%s %s" % (json.dumps(s.get("tags")), sorted(v)))
+        v=[x[1] for x in s["values"] if x[1] is not None]
+        # A spread, not distinct rounded values: mean() over several polls of
+        # 782.55 MHz comes back as 782.5500000001, and rounding that to one
+        # decimal next to a bare 782.5499999 reported one channel as two
+        # frequencies. A real blend is megahertz wide -- 1820 against 1870.
+        if v and max(v)-min(v) > 0.01:
+            print("%s %s..%s" % (json.dumps(s.get("tags")), min(v), max(v)))
 if n==0: print("no series to check")' 2>/dev/null)
 [ -n "$freqq" ] && [ -z "$blend" ] \
     && check 1 "Carrier frequency plots only frequencies a carrier uses" \
@@ -342,6 +347,28 @@ if n==0: print("no values to check")
 [ -z "$agg" ] && check 1 "Aggregated carriers counts carriers, not points" \
               || check 0 "Aggregated carriers counts carriers, not points" \
                        "$(echo "$agg" | head -3 | tr '\n' ';')"
+
+# History panels must end where the data ends. With fill(none) a missing
+# carrier produces no null, Grafana's join leaves an *undefined* in its row,
+# and both the state timeline and the line graph carry on across it -- on the
+# boat's 24h view every carrier of the day was drawn in use until "now".
+# fill(null) says "no sample here", and a minimum interval of one poll keeps
+# that from firing between polls. Checked on the panel definitions, since the
+# failure is in the drawing and no query result shows it.
+tl=$(printf '%s' "$dash" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: print("no dashboard"); sys.exit()
+n=0
+for p in d.get("panels",[]):
+    qs=[t.get("query","") for t in p.get("targets",[])]
+    if not any("$__interval" in q for q in qs): continue
+    n+=1
+    if not p.get("interval"): print("%s: no minimum interval" % p.get("title"))
+    if any("fill(null)" not in q for q in qs): print("%s: not fill(null)" % p.get("title"))
+if n==0: print("no history panels found")' 2>/dev/null)
+[ -z "$tl" ] && check 1 "history panels end where the data ends (fill null, min interval)" \
+             || check 0 "history panels end where the data ends (fill null, min interval)" \
+                      "$(echo "$tl" | tr '\n' ';')"
 
 # The Now row, asked the way the browser asks it: the provisioned panels'
 # own queries, through Grafana. Network, Mode and RRC are present on every
