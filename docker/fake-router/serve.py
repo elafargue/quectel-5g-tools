@@ -25,6 +25,12 @@ FAIL_RATE = float(os.environ.get("FAIL_RATE", "0.02"))
 # Fraction of the time the NR leg is detached, which is the failure that
 # looks healthy on every LTE metric.
 NR_DROP_RATE = float(os.environ.get("NR_DROP_RATE", "0.12"))
+
+# Fraction of requests answered as a WCDMA (3G) attach. Real, and the state
+# the toolkit handled worst: a 3G serving cell parsed to nothing at all, so a
+# working modem read as one attached to nothing. Nothing in the stack
+# exercised it because nothing generated it.
+WCDMA_RATE = float(os.environ.get("WCDMA_RATE", "0.08"))
 SEED = int(os.environ.get("SEED", "20815"))
 
 random.seed(SEED)
@@ -63,6 +69,8 @@ class Radio:
         self.pci = 264
         self.nr_pci = 740
         self.nr_up = True
+        self.on_wcdma = False
+        self.psc = 120
         self.t0 = time.time()
 
     def _walk(self, value, lo, hi, step=1.2):
@@ -87,6 +95,10 @@ class Radio:
             self.net = 1 - self.net
 
         self.nr_up = random.random() > NR_DROP_RATE
+        # Dropping to 3G takes the NR leg with it, the way it does in life.
+        self.on_wcdma = random.random() < WCDMA_RATE
+        if self.on_wcdma:
+            self.nr_up = False
         return swell
 
     def status(self):
@@ -134,6 +146,33 @@ class Radio:
                         "state": "NOCONN"},
             "neighbours": self._neighbours(n, lte_rsrp),
         }
+
+        if self.on_wcdma:
+            # A 3G attach has no LTE and no NR serving cell -- that is the
+            # whole point, and why the technology cannot be inferred from
+            # which of those two measurements turned up. RSCP and Ec/Io, not
+            # RSRP and RSRQ, and no SINR field exists at all.
+            if random.random() < 0.02:
+                self.psc = random.randint(0, 511)
+            status["serving"] = {
+                "state": "NOCONN",
+                "technology": "WCDMA",
+                "wcdma": {
+                    "mcc": n["mcc"], "mnc": n["mnc"],
+                    "lac": "%04X" % random.randint(1, 65535),
+                    "cell_id": cell_id,
+                    "uarfcn": 10713, "psc": self.psc, "rac": 5,
+                    "rscp": round(self._walk(-88, -110, -60, 1.5)),
+                    "ecio": round(self._walk(-9, -20, -3, 0.6)),
+                },
+            }
+            status["ca"] = {"pcc": None, "scc": []}
+            status["neighbours"] = []
+            return status
+
+        # utils.add_technology() derives this on the router; mirror it here so
+        # the dev stack exercises the same field the dashboard reads.
+        status["serving"]["technology"] = "NSA" if self.nr_up else "LTE"
 
         if self.nr_up:
             nr = {

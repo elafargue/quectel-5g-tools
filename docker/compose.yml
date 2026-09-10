@@ -36,6 +36,9 @@ services:
       PORT: "8080"
       FAIL_RATE: "0.02"
       NR_DROP_RATE: "0.12"
+      # How often it answers as a 3G (WCDMA) attach. Real on this link, and
+      # the state the toolkit handled worst until it was given one.
+      WCDMA_RATE: "0.08"
     ports:
       - "${QUECTEL_ROUTER_PORT:-18080}:8080"
 

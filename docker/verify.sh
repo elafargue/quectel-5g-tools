@@ -144,6 +144,46 @@ op=$(iql systemhealth 'SHOW TAG VALUES FROM "quectel_operator" WITH KEY = "opera
              || check 0 "the carrier name is a tag, not a lost string"
 
 echo ""
+echo "=== The connection mode is recorded, not inferred ==="
+
+# quectel_serving exists so the technology does not have to be guessed from
+# which other measurements turned up. On a 3G attach the modem reports neither
+# an LTE nor an NR serving cell, so absence-based inference calls a working
+# link no reading at all.
+echo "$main" | grep -qx quectel_serving \
+    && check 1 "quectel_serving is recorded" \
+    || check 0 "quectel_serving is recorded"
+
+# technology must be a FIELD, not a tag. As a tag it can only be a series
+# name, and the state-timeline panel -- which plots the technology as its
+# value and colours it by value mapping -- would render one row per technology
+# with nothing in it. That failure looks like an empty panel, with no error.
+sfields=$(iql systemhealth "SHOW FIELD KEYS FROM quectel_serving" | values)
+echo "$sfields" | grep -q '^technology' \
+    && check 1 "technology is a field, so it can be the plotted value" \
+    || check 0 "technology is a field, so it can be the plotted value" \
+             "fields: $(echo "$sfields" | tr '\n' ' ')"
+
+stags=$(iql systemhealth "SHOW TAG KEYS FROM quectel_serving" | values)
+echo "$stags" | grep -qx technology \
+    && check 0 "technology is not a tag" \
+    || check 1 "technology is not a tag"
+
+# The panel's own query, run as written.
+modes=$(iql systemhealth 'SELECT last("technology") FROM "quectel_serving" WHERE time > now() - 1h GROUP BY time(30s) fill(none)' | values)
+[ -n "$modes" ] && check 1 "the connection-mode panel's query returns rows" \
+               || check 0 "the connection-mode panel's query returns rows"
+
+# Whatever it reports has to be one of the four the panel maps. An unmapped
+# value renders as a bare string with no colour, which is how a new
+# technology would quietly arrive looking like a glitch.
+badmode=$(echo "$modes" | awk '{print $2}' | sort -u \
+          | grep -vE '^(WCDMA|LTE|NSA|SA)?$' | head -1)
+[ -z "$badmode" ] && check 1 "every technology reported is one the panel maps" \
+                  || check 0 "every technology reported is one the panel maps" \
+                           "unmapped: $badmode"
+
+echo ""
 echo "=== Grafana came up with both datasources and the dashboard ==="
 ds=$(curl -s -u admin:admin "$GRAFANA/api/datasources" || true)
 echo "$ds" | grep -q quectel-influx \
