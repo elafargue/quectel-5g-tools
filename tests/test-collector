@@ -19,7 +19,7 @@ if not ok then
     print("=== Testing Prometheus Collector ===")
     print("")
     print("SKIPPED: luaposix not available (run on router)")
-    os.exit(0)
+    os.exit(77)  -- run-all: skipped, not passed
 end
 
 local probe_device = require("quectel").load_config().device or "/dev/ttyUSB2"
@@ -28,7 +28,7 @@ if not probe_handle then
     print("=== Testing Prometheus Collector ===")
     print("")
     print("SKIPPED: no modem at " .. probe_device .. " (run on router)")
-    os.exit(0)
+    os.exit(77)  -- run-all: skipped, not passed
 end
 probe_handle:close()
 

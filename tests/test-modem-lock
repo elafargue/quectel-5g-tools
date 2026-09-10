@@ -15,6 +15,14 @@
 
 package.path = "lua/?.lua;lua/?/init.lua;/usr/lib/lua/?.lua;/usr/lib/lua/?/init.lua;" .. package.path
 
+-- quectel.lock needs luaposix. Without it this is a missing dependency, not
+-- a failing lock, so exit 77 and let run-all count it as skipped. In Alpine
+-- (lua5.1, lua5.1-posix) it runs in full.
+if not pcall(require, "posix") then
+    print("[SKIP] needs luaposix")
+    os.exit(77)
+end
+
 local lock = require("quectel.lock")
 
 local passed = 0
