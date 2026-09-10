@@ -348,6 +348,43 @@ if n==0: print("no values to check")
               || check 0 "Aggregated carriers counts carriers, not points" \
                        "$(echo "$agg" | head -3 | tr '\n' ';')"
 
+# Neighbours reported, likewise: neighbours per poll, not points per bucket.
+# The old count() at 5-minute buckets read 0 to 64 on this stack where the
+# truth was 1 to 6 per poll. Same test as Aggregated carriers, against the
+# short-retention database the panel reads.
+nbc=$(printf '%s' "$dash" | INFLUX="$INFLUX" TOKEN="$TOKEN" python3 -c '
+import json,sys,os,urllib.request,urllib.parse
+from collections import Counter
+def q(s):
+    u=os.environ["INFLUX"]+"/query?"+urllib.parse.urlencode({"db":"systemhealth_short","q":s})
+    rq=urllib.request.Request(u,headers={"Authorization":"Token "+os.environ["TOKEN"]})
+    return json.load(urllib.request.urlopen(rq,timeout=15)).get("results",[])
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: print("no dashboard"); sys.exit()
+p=[x for x in d.get("panels",[]) if x.get("title")=="Neighbours reported"]
+if not p: print("panel not found"); sys.exit()
+c=Counter()
+for r in q("SELECT rsrp, \"scope\" FROM quectel_neighbour WHERE time > now() - 30m"):
+    for s in r.get("series",[]):
+        ti=s["columns"].index("time"); si=s["columns"].index("scope")
+        for row in s["values"]: c[(row[ti],row[si])]+=1
+truth={}
+for (t,sc),n in c.items(): truth[sc]=max(truth.get(sc,0),n)
+n=0
+sq=p[0]["targets"][0]["query"].replace("$timeFilter","time > now() - 30m").replace("$__interval","5m")
+for r in q(sq):
+    for s in r.get("series",[]):
+        sc=s.get("tags",{}).get("scope")
+        for _,val in s["values"]:
+            if val is None: continue
+            n+=1
+            if val > truth.get(sc,0)+1e-9: print("%s: %s > per-poll max %s" % (sc,val,truth.get(sc)))
+if n==0: print("no values to check")
+' 2>&1 | sort -u)
+[ -z "$nbc" ] && check 1 "Neighbours reported counts neighbours, not points" \
+              || check 0 "Neighbours reported counts neighbours, not points" \
+                       "$(echo "$nbc" | head -3 | tr '\n' ';')"
+
 # History panels must end where the data ends. With fill(none) a missing
 # carrier produces no null, Grafana's join leaves an *undefined* in its row,
 # and both the state timeline and the line graph carry on across it -- on the

@@ -722,6 +722,16 @@ def build_panels(iu: str, su: str, window: str,
     # here, and InfluxQL's distinct() does not operate on tags. It returns
     # nothing, silently, which is a slow way to find out.
     #
+    # Neighbours per poll, not points per bucket -- the fix Aggregated
+    # carriers below has, for the same reason. count() over a display bucket
+    # counted neighbours times polls: 0 to 64 on the dev stack's 5-minute
+    # buckets where the truth was 1 to 6 per poll, and on the boat's 24h view,
+    # whose half-width panel gets 2-minute buckets, about double. One poll's
+    # neighbours share one timestamp -- they come from one json_v2 parse -- so
+    # the inner time(1s) grouping counts per poll, and the outer query
+    # averages those per bucket. The inner query keeps fill(none): its empty
+    # buckets are the gaps between polls, not missing readings.
+    #
     # fill(null), not fill(0) and not fill(none). With the minimum interval at
     # one poll, a bucket without a sample really had none: fill(null) draws it
     # as a break. fill(0) would draw it as "no neighbours" -- a measurement
@@ -732,9 +742,11 @@ def build_panels(iu: str, su: str, window: str,
     panels.append(timeseries(
         "Neighbours reported", gp(12, 30, 12, 6),
         [iql(su, "A",
-             'SELECT count("rsrp") FROM "quectel_neighbour" '
-             'WHERE $timeFilter GROUP BY time($__interval), "scope" '
-             'fill(null)',
+             'SELECT mean("n") FROM ('
+             'SELECT count("rsrp") AS "n" FROM "quectel_neighbour" '
+             'WHERE $timeFilter GROUP BY time(1s), "scope" fill(none)'
+             ') WHERE $timeFilter '
+             'GROUP BY time($__interval), "scope" fill(null)',
              "$tag_scope")],
         influx(su), fill=30,
         description=(
@@ -748,6 +760,8 @@ def build_panels(iu: str, su: str, window: str,
             "Gaps are polls that returned no sample, drawn as a break rather "
             "than as zero: no neighbours reported and no reading taken are "
             "different things.\n\n"
+            "At wider zoom each point averages the polls inside it, so 3.5 "
+            "means it heard 3 and 4 by turns.\n\n"
             "Kept for 24 hours only -- neighbour lists churn constantly on a "
             "moving vessel, so they live in a short-retention bucket of their "
             "own. Ranges longer than a day will look empty here.")))

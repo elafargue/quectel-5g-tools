@@ -1624,7 +1624,7 @@
     {
       "type": "timeseries",
       "title": "Neighbours reported",
-      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one). The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nGaps are polls that returned no sample, drawn as a break rather than as zero: no neighbours reported and no reading taken are different things.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
+      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one). The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nGaps are polls that returned no sample, drawn as a break rather than as zero: no neighbours reported and no reading taken are different things.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1642,7 +1642,7 @@
             "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT count(\"rsrp\") FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(null)",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time(1s), \"scope\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
