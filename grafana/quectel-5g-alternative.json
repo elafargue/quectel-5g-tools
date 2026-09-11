@@ -1471,7 +1471,7 @@
           },
           "mappings": [],
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -1981,13 +1981,13 @@
             }
           ],
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]

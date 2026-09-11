@@ -397,6 +397,32 @@ for p in d.get("panels",[]):
 [ "$nbstack" = "normal" ] && check 1 "Neighbours reported stacks its scopes" \
                          || check 0 "Neighbours reported stacks its scopes" "stacking mode '${nbstack:-none found}'"
 
+# A colour must mean the same value at every time range. A continuous scheme
+# spreads its colours between the lowest and highest value in the data on
+# screen unless min and max are fixed, and percentage thresholds are measured
+# against that same range -- Carriers in use painted -80 dBm yellow or dark
+# orange depending on the range, and upside down besides. Checked on every
+# panel's defaults and per-field overrides.
+colour=$(printf '%s' "$dash" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)["dashboard"]
+except Exception: print("no dashboard"); sys.exit()
+for p in d.get("panels",[]):
+    fc=p.get("fieldConfig",{}); dfl=fc.get("defaults",{}); t=p.get("title")
+    cm=str((dfl.get("color") or {}).get("mode",""))
+    if cm.startswith("continuous") and (dfl.get("min") is None or dfl.get("max") is None):
+        print("%s: %s without fixed min/max" % (t,cm))
+    if (dfl.get("thresholds") or {}).get("mode")=="percentage": print("%s: percentage thresholds" % t)
+    for o in fc.get("overrides",[]):
+        for pr in o.get("properties",[]):
+            v=pr.get("value")
+            if isinstance(v,dict) and pr.get("id")=="color" and str(v.get("mode","")).startswith("continuous"):
+                print("%s/%s: continuous override" % (t,o.get("matcher",{}).get("options")))
+            if isinstance(v,dict) and pr.get("id")=="thresholds" and v.get("mode")=="percentage":
+                print("%s/%s: percentage thresholds" % (t,o.get("matcher",{}).get("options")))' 2>/dev/null)
+[ -z "$colour" ] && check 1 "colours are absolute: the same value is the same colour at every range" \
+                 || check 0 "colours are absolute: the same value is the same colour at every range" \
+                          "$(echo "$colour" | tr '\n' ';')"
+
 # History panels must end where the data ends. With fill(none) a missing
 # carrier produces no null, Grafana's join leaves an *undefined* in its row,
 # and both the state timeline and the line graph carry on across it -- on the

@@ -363,9 +363,22 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
                            "hideFrom": {"legend": False, "tooltip": False,
                                         "viz": False}},
                 "mappings": mappings or [],
-                "color": {"mode": "continuous-GrYlRd"},
+                # Colour by the thresholds, which are absolute: -80 dBm is
+                # green at every time range. This was continuous-GrYlRd, a
+                # scheme that spreads its colours between the lowest and
+                # highest value in the data on screen -- so -80 turned yellow
+                # or dark orange as the range changed what else was in view,
+                # and with green at the low end it painted the weakest RSRP
+                # green and the strongest red. The thresholds sat alongside it
+                # unused. docker/verify.sh fails any continuous scheme without
+                # a fixed min and max.
+                "color": {"mode": "thresholds"},
+                # A timeline without thresholds colours through its value
+                # mappings; anything they miss falls back to neutral text
+                # rather than to a colour that reads as one of the mapped
+                # states.
                 "thresholds": steps(thresholds) if thresholds else {
-                    "mode": "absolute", "steps": [{"color": "green",
+                    "mode": "absolute", "steps": [{"color": "text",
                                                    "value": None}]},
             },
             "overrides": [],
