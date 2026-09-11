@@ -1432,7 +1432,7 @@
     {
       "type": "state-timeline",
       "title": "Carriers in use",
-      "description": "Which carriers were actually in use over time, as blocks rather than lines. Each row is one carrier and its colour is that carrier's RSRP on the usual scale, so a row that turns red was still in use but weak.\n\n**Row labels read \"role technology band channel\".** `pcc lte 3 1550` is the primary carrier on LTE band 3, channel (EARFCN) 1550; `scc 5g 78 636672` a secondary on 5G n78. Role and channel are both there because intra-band aggregation is ordinary -- two or three carriers can sit on one band at once, and the channel is what tells two secondaries apart. Rows from before an install began recording the channel show it blank.\n\n**The number inside each block is that carrier's RSRP in dBm** -- signal strength, always negative, closer to zero is stronger, green from -80 and red below -100 like everywhere else here. It is not a count, a band number or an id. The unit is left off so that narrow blocks stay readable, and Grafana drops the number altogether when a block is too narrow to fit it; the colour carries the same reading either way.\n\n**A row that stops is a carrier that was dropped; a row that starts is one that was added.** That is the quickest read of a handover or of the 5G leg detaching.\n\nRows are every carrier seen anywhere in the selected time range, not the ones up right now, so widening the range adds rows for carriers long since left behind. *Connected carriers* at the top of the dashboard is where \"right now\" lives.",
+      "description": "Which carriers were actually in use over time, as blocks rather than lines. Each row is one carrier and its colour is that carrier's RSRP -- a gradient from red at -110 dBm to green at -70, the same colour for the same reading at any time range -- so a row that turns red was still in use but weak. Hover a block for the exact reading.\n\n**Row labels read \"role technology band channel\".** `pcc lte 3 1550` is the primary carrier on LTE band 3, channel (EARFCN) 1550; `scc 5g 78 636672` a secondary on 5G n78. Role and channel are both there because intra-band aggregation is ordinary -- two or three carriers can sit on one band at once, and the channel is what tells two secondaries apart. Rows from before an install began recording the channel show it blank.\n\n**The number inside each block is that carrier's RSRP in dBm** -- signal strength, always negative, closer to zero is stronger, green from -80 and red below -100 like everywhere else here. It is not a count, a band number or an id. The unit is left off so that narrow blocks stay readable, and Grafana drops the number altogether when a block is too narrow to fit it; the colour carries the same reading either way.\n\n**A row that stops is a carrier that was dropped; a row that starts is one that was added.** That is the quickest read of a handover or of the 5G leg detaching.\n\nRows are every carrier seen anywhere in the selected time range, not the ones up right now, so widening the range adds rows for carriers long since left behind. *Connected carriers* at the top of the dashboard is where \"right now\" lives.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1471,29 +1471,20 @@
           },
           "mappings": [],
           "color": {
-            "mode": "thresholds"
+            "mode": "continuous-RdYlGr"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "text",
                 "value": null
-              },
-              {
-                "color": "orange",
-                "value": -100
-              },
-              {
-                "color": "yellow",
-                "value": -90
-              },
-              {
-                "color": "green",
-                "value": -80
               }
             ]
-          }
+          },
+          "min": -110,
+          "max": -70,
+          "unit": "dBm"
         },
         "overrides": []
       },

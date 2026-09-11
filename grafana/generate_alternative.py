@@ -347,7 +347,19 @@ def timeseries(title, gridpos, targets, ds, unit=None, thresholds=None,
 
 
 def state_timeline(title, gridpos, targets, ds, thresholds=None,
-                   description="", mappings=None) -> dict:
+                   description="", mappings=None, gradient=None,
+                   unit=None) -> dict:
+    """gradient is (scheme, min, max): a continuous colour scheme over a
+    *fixed* range. Fixed is the point -- without min and max a continuous
+    scheme spreads its colours over whatever data is on screen, and the same
+    reading changes colour with the time range. docker/verify.sh fails that.
+    """
+    extra = {}
+    if gradient:
+        scheme, lo, hi = gradient
+        extra = {"min": lo, "max": hi}
+    if unit:
+        extra["unit"] = unit
     return {
         "type": "state-timeline",
         "title": title,
@@ -363,8 +375,9 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
                            "hideFrom": {"legend": False, "tooltip": False,
                                         "viz": False}},
                 "mappings": mappings or [],
-                # Colour by the thresholds, which are absolute: -80 dBm is
-                # green at every time range. This was continuous-GrYlRd, a
+                # By default colour by the thresholds, which are absolute:
+                # -80 dBm is green at every time range. See `gradient` for the
+                # other absolute option. This was continuous-GrYlRd, a
                 # scheme that spreads its colours between the lowest and
                 # highest value in the data on screen -- so -80 turned yellow
                 # or dark orange as the range changed what else was in view,
@@ -372,7 +385,7 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
                 # green and the strongest red. The thresholds sat alongside it
                 # unused. docker/verify.sh fails any continuous scheme without
                 # a fixed min and max.
-                "color": {"mode": "thresholds"},
+                "color": {"mode": gradient[0] if gradient else "thresholds"},
                 # A timeline without thresholds colours through its value
                 # mappings; anything they miss falls back to neutral text
                 # rather than to a colour that reads as one of the mapped
@@ -380,6 +393,7 @@ def state_timeline(title, gridpos, targets, ds, thresholds=None,
                 "thresholds": steps(thresholds) if thresholds else {
                     "mode": "absolute", "steps": [{"color": "text",
                                                    "value": None}]},
+                **extra,
             },
             "overrides": [],
         },
@@ -668,12 +682,22 @@ def build_panels(iu: str, su: str, window: str,
              'GROUP BY time($__interval), "role", "rat", "band", "arfcn" '
              'fill(null)',
              "$tag_role $tag_rat $tag_band $tag_arfcn")],
-        influx(iu), thresholds=RSRP_STEPS,
+        # A gradient, not the four RSRP bands. In thresholds mode a timeline
+        # turns every reading into its band -- consecutive readings in one band
+        # merge into a single block and the tooltip shows the band -- and the
+        # actual RSRP is what is worth reading on hover. Red-Yellow-Green so
+        # that stronger is greener, over a fixed -110..-70 dBm so a reading is
+        # the same colour at every range: centred on -90, it lands yellow at
+        # -90, orange-red towards -100, green from -80, near enough the bands
+        # the rest of the dashboard uses; readings beyond either end clamp.
+        influx(iu), gradient=("continuous-RdYlGr", -110, -70), unit="dBm",
         description=(
             "Which carriers were actually in use over time, as blocks rather "
             "than lines. Each row is one carrier and its colour is that "
-            "carrier's RSRP on the usual scale, so a row that turns red was "
-            "still in use but weak.\n\n"
+            "carrier's RSRP -- a gradient from red at -110 dBm to green at "
+            "-70, the same colour for the same reading at any time range -- "
+            "so a row that turns red was still in use but weak. Hover a block "
+            "for the exact reading.\n\n"
             "**Row labels read \"role technology band channel\".** "
             "`pcc lte 3 1550` is the primary carrier on LTE band 3, channel "
             "(EARFCN) 1550; `scc 5g 78 636672` a secondary on 5G n78. Role and "
