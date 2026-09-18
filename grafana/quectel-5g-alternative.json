@@ -829,7 +829,7 @@
             "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT \"rsrp\", \"rsrq\" FROM \"quectel_neighbour\" WHERE time > now() - 75s GROUP BY \"rat\", \"scope\", \"arfcn\", \"pci\" ORDER BY time DESC LIMIT 1",
+          "query": "SELECT \"rsrp\", \"rsrq\", \"rscp\", \"ecno\" FROM \"quectel_neighbour\" WHERE time > now() - 75s GROUP BY \"rat\", \"scope\", \"arfcn\", \"pci\", \"uarfcn\", \"psc\" ORDER BY time DESC LIMIT 1",
           "rawQuery": true,
           "resultFormat": "table"
         }
@@ -875,7 +875,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 60
+                "value": 55
               }
             ]
           },
@@ -887,7 +887,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 70
+                "value": 65
               }
             ]
           },
@@ -899,7 +899,31 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 50
+                "value": 45
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UARFCN"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 65
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PSC"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 45
               }
             ]
           },
@@ -945,7 +969,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 75
+                "value": 70
               }
             ]
           },
@@ -991,7 +1015,39 @@
               },
               {
                 "id": "custom.width",
+                "value": 65
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RSCP"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
                 "value": 70
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ec/No"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 65
+              },
+              {
+                "id": "decimals",
+                "value": 1
               }
             ]
           },
@@ -1046,17 +1102,25 @@
               "scope": 1,
               "arfcn": 2,
               "pci": 3,
-              "rsrp": 4,
-              "rsrq": 5,
-              "Time": 6
+              "uarfcn": 4,
+              "psc": 5,
+              "rsrp": 6,
+              "rsrq": 7,
+              "rscp": 8,
+              "ecno": 9,
+              "Time": 10
             },
             "renameByName": {
               "rat": "RAT",
               "scope": "Scope",
               "arfcn": "ARFCN",
               "pci": "PCI",
+              "uarfcn": "UARFCN",
+              "psc": "PSC",
               "rsrp": "RSRP",
               "rsrq": "RSRQ",
+              "rscp": "RSCP",
+              "ecno": "Ec/No",
               "Time": "Seen"
             },
             "excludeByName": {}
@@ -1615,7 +1679,7 @@
     {
       "type": "timeseries",
       "title": "Neighbours reported",
-      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one), **stacked, so the top of the stack is the total heard**. The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\n**A gap in `inter` while `intra` carries on means no neighbours were heard on other frequencies** -- there are none to count, so there is no line, and the top of the stack is `intra` alone, which is the right total. A gap in both is a poll that returned nothing: the router or the modem could not be read, which is not the same as hearing no one.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
+      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one), **stacked, so the top of the stack is the total heard**. The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nOn 3G the split is by radio instead: a WCDMA neighbour line carries no intra/inter, so those arrive as a single `wcdma` series.\n\n**A gap in `inter` while `intra` carries on means no neighbours were heard on other frequencies** -- there are none to count, so there is no line, and the top of the stack is `intra` alone, which is the right total. A gap in both is a poll that returned nothing: the router or the modem could not be read, which is not the same as hearing no one.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1637,6 +1701,17 @@
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB_SHORT}"
+          },
+          "refId": "B",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rscp\") AS \"n\" FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time(1s), \"rat\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"rat\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "$tag_rat"
         }
       ],
       "fieldConfig": {

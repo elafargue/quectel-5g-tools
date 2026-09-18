@@ -573,23 +573,34 @@ def build_panels(iu: str, su: str, window: str,
     # first time, is read row by row rather than only counted.
     panels.append(table(
         "Neighbour cells", gp(12, 5, 12, 9),
+        # rscp/ecno alongside rsrp/rsrq, and uarfcn/psc alongside arfcn/pci:
+        # a 3G neighbour reports the first of each pair and none of the
+        # second. Selecting only the 4G names left every WCDMA row blank, and
+        # grouping only on the 4G identifiers merged them into one.
         [iql(su, "A",
-             'SELECT "rsrp", "rsrq" FROM "quectel_neighbour" '
-             f'WHERE {since} GROUP BY "rat", "scope", "arfcn", "pci" '
+             'SELECT "rsrp", "rsrq", "rscp", "ecno" FROM "quectel_neighbour" '
+             f'WHERE {since} GROUP BY "rat", "scope", "arfcn", "pci", '
+             '"uarfcn", "psc" '
              'ORDER BY time DESC LIMIT 1', fmt="table")],
         influx(su),
         transformations=[
             {"id": "sortBy", "options": {
                 "fields": {}, "sort": [{"field": "rsrp", "desc": True}]}},
             _organize([("rat", "RAT"), ("scope", "Scope"), ("arfcn", "ARFCN"),
-                       ("pci", "PCI"), ("rsrp", "RSRP"), ("rsrq", "RSRQ"),
+                       ("pci", "PCI"), ("uarfcn", "UARFCN"), ("psc", "PSC"),
+                       ("rsrp", "RSRP"), ("rsrq", "RSRQ"),
+                       ("rscp", "RSCP"), ("ecno", "Ec/No"),
                        ("Time", "Seen")]),
         ],
         overrides=[
-            _width("RAT", 50), _width("Scope", 60), _width("ARFCN", 70),
-            _width("PCI", 50),
-            _colour_override("RSRP", RSRP_STEPS, "dBm", 75),
-            _colour_override("RSRQ", RSRQ_STEPS, "dB", 70),
+            _width("RAT", 50), _width("Scope", 55), _width("ARFCN", 65),
+            _width("PCI", 45), _width("UARFCN", 65), _width("PSC", 45),
+            _colour_override("RSRP", RSRP_STEPS, "dBm", 70),
+            _colour_override("RSRQ", RSRQ_STEPS, "dB", 65),
+            # RSCP and Ec/No are uncoloured for the same reason the 3G serving
+            # cell is: thresholds.lua is calibrated for RSRP and does not
+            # describe them.
+            _width("RSCP", 70, decimals=1), _width("Ec/No", 65, decimals=1),
             _seen_override(),
         ],
         description=(
@@ -786,13 +797,26 @@ def build_panels(iu: str, su: str, window: str,
     # the gap. DEFAULT_POLL_INTERVAL has the detail.
     panels.append(timeseries(
         "Neighbours reported", gp(12, 30, 12, 6),
+        # Two targets because there is no field every neighbour carries. A 4G
+        # neighbour reports rsrp and a 3G one rscp -- different quantities,
+        # deliberately not conflated anywhere else, and counting only rsrp
+        # drew a flat zero through a 3G attach: neighbours plainly there,
+        # reported as none. The 3G one groups by rat rather than scope,
+        # since a WCDMA neighbour line carries no intra/inter at all.
         [iql(su, "A",
              'SELECT mean("n") FROM ('
              'SELECT count("rsrp") AS "n" FROM "quectel_neighbour" '
              'WHERE $timeFilter GROUP BY time(1s), "scope" fill(none)'
              ') WHERE $timeFilter '
              'GROUP BY time($__interval), "scope" fill(null)',
-             "$tag_scope")],
+             "$tag_scope"),
+         iql(su, "B",
+             'SELECT mean("n") FROM ('
+             'SELECT count("rscp") AS "n" FROM "quectel_neighbour" '
+             'WHERE $timeFilter GROUP BY time(1s), "rat" fill(none)'
+             ') WHERE $timeFilter '
+             'GROUP BY time($__interval), "rat" fill(null)',
+             "$tag_rat")],
         influx(su), fill=30, stack=True,
         description=(
             "How many neighbouring cells the modem could hear at each poll, "
@@ -803,6 +827,9 @@ def build_panels(iu: str, su: str, window: str,
             "**A thinning count is an early warning of running out of "
             "coverage, and it usually moves before RSRP does** -- you lose "
             "the alternatives before you lose the cell you are on.\n\n"
+            "On 3G the split is by radio instead: a WCDMA neighbour line "
+            "carries no intra/inter, so those arrive as a single `wcdma` "
+            "series.\n\n"
             "**A gap in `inter` while `intra` carries on means no neighbours "
             "were heard on other frequencies** -- there are none to count, so "
             "there is no line, and the top of the stack is `intra` alone, "

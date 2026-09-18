@@ -186,7 +186,29 @@ class Radio:
                 },
             }
             status["ca"] = {"pcc": None, "scc": []}
-            status["neighbours"] = []
+            # Neighbours, which this profile used to leave empty -- and so
+            # never exercised the thing most likely to be wrong about them.
+            # A WCDMA neighbour has a PSC and a UARFCN where a 4G one has a
+            # PCI and an EARFCN, and no intra/inter scope at all, so tagged
+            # on the 4G identifiers alone every neighbour in a poll shares
+            # one series key and InfluxDB keeps exactly one of them.
+            #
+            # Soft handover puts them on the serving UARFCN, several dB down,
+            # which is what the Free/Orange capture showed. RSCP and Ec/No
+            # carry a decimal here because the modem reports neighbour values
+            # in tenths while the serving line is whole -- the parser
+            # reconciles the two, and a flat number here would hide it.
+            status["neighbours"] = [
+                {
+                    "rat": "wcdma",
+                    "uarfcn": 10713,
+                    "psc": random.randint(0, 511),
+                    "rscp": round(status["serving"]["wcdma"]["rscp"]
+                                  - random.uniform(4, 18), 1),
+                    "ecno": round(random.uniform(-19, -8), 1),
+                }
+                for _ in range(random.randint(2, 4))
+            ]
             return status
 
         # utils.add_technology() derives this on the router; mirror it here so
