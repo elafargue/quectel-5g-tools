@@ -565,6 +565,84 @@ print("")
 -- manual is right about this module. Replace it with a real capture when one
 -- turns up, the way Tests 19-21 were built, and expect surprises: a
 -- one-character TAC, a PCI of 0 and a six-digit cell ID all arrived that way.
+-- Test 22b: the same, from a live 3G attach -- Free roaming on Orange (208/01)
+--
+-- The doc-derived fixture above turned out to be right about field order,
+-- which no other capture in this file managed. Kept as a second instance
+-- rather than a replacement: this one has "-" in every trailing field, so it
+-- is the one that proves they parse to nil rather than to zero.
+--
+-- AT+QNWINFO agreed independently ("WCDMA","20801","WCDMA_VIII_900",3000) and
+-- AT+COPS? ended in 2, UTRAN -- plain WCDMA rather than HSPA. AT+CSQ read 22,
+-- which is -113 + 2*22 = -69 dBm, matching the serving RSCP exactly.
+print("Test 22b: WCDMA serving cell from a live Free/Orange attach")
+
+local w3 = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN","WCDMA",208,01,6319,1027934,3000,492,2,' ..
+    '-69,-4,-,-,-,-,-\n\nOK')
+
+test("live WCDMA parsed", w3.wcdma ~= nil)
+test("live WCDMA mcc 208", w3.wcdma and w3.wcdma.mcc == 208)
+test("live WCDMA mnc 1", w3.wcdma and w3.wcdma.mnc == 1)
+-- The SIM is Free (208/15); the network is Orange. National roaming, and the
+-- reason the operator name and the PLMN disagree without either being wrong.
+test("live WCDMA lac stays a string", w3.wcdma and w3.wcdma.lac == "6319")
+test("live WCDMA cell id stays a string",
+    w3.wcdma and w3.wcdma.cell_id == "1027934")
+test("live WCDMA uarfcn 3000", w3.wcdma and w3.wcdma.uarfcn == 3000)
+test("live WCDMA psc 492", w3.wcdma and w3.wcdma.psc == 492)
+test("live WCDMA rac 2", w3.wcdma and w3.wcdma.rac == 2)
+test("live WCDMA rscp -69", w3.wcdma and w3.wcdma.rscp == -69)
+test("live WCDMA ecio -4", w3.wcdma and w3.wcdma.ecio == -4)
+-- Every trailing field is "-" on this modem. They must be nil, not 0: a zero
+-- spreading factor or slot number is a reading, and there was none.
+test("a dash trailing field is nil, not zero",
+    w3.wcdma and w3.wcdma.phych == nil and w3.wcdma.sf == nil
+        and w3.wcdma.slot == nil and w3.wcdma.speech_code == nil
+        and w3.wcdma.commod == nil)
+
+local w3s = { serving = w3 }
+utils.add_technology(w3s)
+test("live WCDMA technology is WCDMA", w3.technology == "WCDMA")
+
+-- AT+QCAINFO answers with a bare OK on 3G: there is no aggregation to report.
+-- That must read as "no carriers", not as a failed read.
+local w3ca = parser.parse_qcainfo("OK")
+test("a bare OK QCAINFO gives no primary", w3ca.pcc == nil)
+test("a bare OK QCAINFO gives no secondaries", #w3ca.scc == 0)
+
+-- Neighbours, from the same capture. Two same-length layouts exist and
+-- nothing in the line says which; the serving technology does, so it is
+-- passed in. Without it, only the UARFCN is recorded.
+local W3N = '+QENG: "neighbourcell","WCDMA",3000,-630,482,-770,-135,6,-23,-\n' ..
+            '+QENG: "neighbourcell","WCDMA",3000,-630,184,-790,-155,2,-23,-\n\nOK'
+
+local blind = parser.parse_neighbours(W3N)
+test("told nothing, only the uarfcn is recorded",
+    blind[1].uarfcn == 3000 and blind[1].psc == nil and blind[1].rscp == nil)
+
+local wn = parser.parse_neighbours(W3N, "WCDMA")
+test("two WCDMA neighbours parsed", #wn == 2)
+test("neighbour uarfcn matches the serving cell", wn[1].uarfcn == 3000)
+-- PSC is 0-511. 482 and 184 are in range and distinct from the serving 492;
+-- the LTE-mode layout would have put -770 here.
+test("neighbour psc 482", wn[1].psc == 482)
+test("neighbour psc 184", wn[2].psc == 184)
+-- Reported in tenths, unlike the serving line. -770 unscaled is not a power
+-- any receiver reports; -77.0 dBm sits just below the serving cell's -69,
+-- which is where a neighbour belongs.
+test("neighbour rscp scales to -77.0", wn[1].rscp == -77.0)
+test("neighbour rscp scales to -79.0", wn[2].rscp == -79.0)
+test("neighbour ecno scales to -13.5", wn[1].ecno == -13.5)
+test("neighbour ecno scales to -15.5", wn[2].ecno == -15.5)
+-- Weaker than the cell we are on, in both quantities, both neighbours.
+test("both neighbours are weaker than the serving cell",
+    wn[1].rscp < w3.wcdma.rscp and wn[2].rscp < w3.wcdma.rscp
+        and wn[1].ecno < w3.wcdma.ecio and wn[2].ecno < w3.wcdma.ecio)
+-- RSRP stays absent: it is a different quantity and nothing measured one.
+test("a WCDMA neighbour has no rsrp", wn[1].rsrp == nil)
+print("")
+
 print("Test 22: WCDMA serving cell (doc-derived, not a live capture)")
 local w = parser.parse_serving_cell(
     '+QENG: "servingcell","NOCONN","WCDMA",222,10,00C1,D2620E,10713,120,5,' ..

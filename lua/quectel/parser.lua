@@ -410,7 +410,32 @@ end
 --- Parse +QENG="neighbourcell" response
 -- @param text AT+QENG="neighbourcell" response
 -- @return List of neighbour cells
-function M.parse_neighbours(text)
+-- Scale factor on the RSCP and Ec/No a WCDMA neighbour line reports.
+--
+-- Inferred from the Free/Orange capture, not from the manual, which gives no
+-- units: the serving cell reported RSCP -69 dBm and AT+CSQ independently
+-- agreed at -69, while its neighbours on the same UARFCN reported -770 and
+-- -790. Unscaled those are not physical; at a tenth they are -77.0 and -79.0,
+-- weaker than the serving cell as neighbours should be. Ec/No lands the same
+-- way: -135 and -155 against the serving cell's -4 dB.
+--
+-- The serving line is *not* scaled, so the two must be reconciled here or a
+-- neighbour sorts above the cell we are actually on.
+local WCDMA_NEIGHBOUR_SCALE = 10
+
+local function scaled(value)
+    local n = tonumber(value)
+    if not n then return nil end
+    return n / WCDMA_NEIGHBOUR_SCALE
+end
+
+--- Parse +QENG="neighbourcell" response
+-- @param text Raw AT response
+-- @param serving_technology Technology of the serving cell ("WCDMA", "LTE",
+--        "NSA", "SA"), which disambiguates the two WCDMA neighbour layouts.
+--        Omit it and a WCDMA neighbour records only its UARFCN.
+-- @return Array of neighbour cells
+function M.parse_neighbours(text, serving_technology)
     local neighbours = {}
 
     for values in M.parse_response(text, "+QENG") do
@@ -424,31 +449,47 @@ function M.parse_neighbours(text)
                 -- A WCDMA neighbour is reported while camped on LTE as well
                 -- as while camped on 3G, so this line reaches us on a modem
                 -- that never leaves LTE. Falling through to the LTE layout
-                -- below is what used to happen, and it is silently wrong:
-                -- <cell_resel_priority> lands in pci and the two reselection
-                -- thresholds land in rsrq and rsrp. Small integers, entirely
-                -- plausible on screen, and strong enough that print_neighbours
-                -- would sort them to the top of the five it shows.
+                -- below is silently wrong: <cell_resel_priority> lands in pci
+                -- and the two reselection thresholds land in rsrq and rsrp.
+                -- Small integers, entirely plausible on screen, and strong
+                -- enough that print_neighbours would sort them to the top of
+                -- the five it shows.
                 --
-                -- Only uarfcn is recorded. The manual gives two different
-                -- WCDMA neighbour layouts -- one for when the serving cell is
-                -- LTE, one for when it is WCDMA -- and they are the same
-                -- length, differing in where PSC and RSCP sit:
+                -- The manual gives two layouts of the same length, differing
+                -- in where PSC and RSCP sit:
                 --
                 --   LTE mode:   <uarfcn>,<cell_resel_priority>,<thresh_Xhigh>,
                 --               <thresh_Xlow>,<PSC>,<RSCP>,<ecno>,<srxlev>
                 --   WCDMA mode: <uarfcn>,<srxqual>,<PSC>,<RSCP>,<ecno>,<set>,
                 --               <rank>,<srxlev>
                 --
-                -- Nothing in the line says which one it is, and this function
-                -- is not told what the serving cell is. Guessing would put a
-                -- reselection threshold in a signal field, which is the exact
-                -- failure being removed. Recording less is the honest option.
-                table.insert(neighbours, {
-                    scope = scope,
-                    rat = "wcdma",
-                    uarfcn = tonumber(values[3]),
-                })
+                -- Nothing in the line says which. What does say is the
+                -- serving cell, read from the same modem moments earlier, so
+                -- the caller passes it in. Told nothing, we still record only
+                -- the UARFCN rather than guess -- putting a reselection
+                -- threshold in a signal field is the failure being avoided.
+                local n = { scope = scope, rat = "wcdma",
+                            uarfcn = tonumber(values[3]) }
+
+                if serving_technology == "WCDMA" then
+                    -- Confirmed against a live Free/Orange 3G attach.
+                    n.psc  = tonumber(values[5])
+                    n.rscp = scaled(values[6])
+                    n.ecno = scaled(values[7])
+                elseif serving_technology == "LTE"
+                        or serving_technology == "NSA"
+                        or serving_technology == "SA" then
+                    -- Doc-derived. No capture of a WCDMA neighbour seen from
+                    -- an LTE serving cell has ever reached this repository,
+                    -- and every capture so far has corrected the manual in
+                    -- some way -- so treat these three with suspicion until
+                    -- one does.
+                    n.psc  = tonumber(values[7])
+                    n.rscp = scaled(values[8])
+                    n.ecno = scaled(values[9])
+                end
+
+                table.insert(neighbours, n)
             else
                 table.insert(neighbours, {
                     scope = scope,

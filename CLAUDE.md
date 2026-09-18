@@ -242,11 +242,16 @@ a gap in InfluxDB. A working 3G link reported as no link at all — the same
 class of lie as "a failed read is not a measurement", arriving through a case
 nobody had a capture for.
 
-The WCDMA branch is **derived from `doc/quectel-rm520n-excerpt.pdf`, not from
-a live capture** — the only fixture here that is. Field order comes from the
-manual's "In WCDMA mode" form. Test 22 says so in its own comment; replace it
-when a real 3G capture turns up, and expect surprises, because every one of
-Tests 19-21 found something the manual did not mention.
+A live 3G attach has since confirmed it — Free roaming on Orange (208/01),
+Test 22b — and for once the manual was right about field order. The doc-derived
+Test 22 is kept beside it; the live one is the fixture that proves the trailing
+`-` fields parse to nil rather than to zero, since this modem sent `-` for all
+five. `AT+QNWINFO` agreed independently, `AT+COPS?` ended in 2 (UTRAN, so plain
+WCDMA not HSPA), and `AT+CSQ` read 22 — −113 + 2×22 = −69 dBm, matching the
+serving RSCP exactly.
+
+`AT+QCAINFO` answers with a bare `OK` on 3G. That parses to no primary and no
+secondaries, which is "nothing aggregated" and not a failed read.
 
 Three deliberate non-reuses of the LTE/NR names:
 
@@ -272,11 +277,32 @@ layout, which put `<cell_resel_priority>` in `pci` and the two reselection
 thresholds in `rsrq` and `rsrp` — small, plausible numbers, and strong enough
 that `print_neighbours` would sort them into the five it shows.
 
-Only `uarfcn` is recorded now. The manual gives two WCDMA neighbour layouts,
-one for an LTE serving cell and one for a WCDMA serving cell, **of the same
-length**, differing in where PSC and RSCP sit — and nothing in the line says
-which is in use. Recording less beats recording a reselection threshold as a
-signal strength. Test 24 holds both directions.
+The manual gives two WCDMA neighbour layouts, one for an LTE serving cell and
+one for a WCDMA serving cell, **of the same length**, differing in where PSC
+and RSCP sit — and nothing *in the line* says which is in use. What does say is
+the serving cell, read from the same modem moments earlier, so `get_status()`
+reads serving first and passes its technology to `parse_neighbours(text,
+tech)`. Told nothing, it still records only `uarfcn`: recording less beats
+recording a reselection threshold as a signal strength. Test 24 holds that
+direction, Test 22b the other.
+
+**A WCDMA neighbour reports RSCP and Ec/No in tenths, and the serving line does
+not.** Inferred from the live capture rather than the manual, which gives no
+units: neighbours on the serving UARFCN read −770 and −790 where the serving
+cell read −69 and `AT+CSQ` independently agreed. Unscaled those are not powers
+any receiver reports; at a tenth they are −77.0 and −79.0 dBm, just below the
+cell we are on, with Ec/No −13.5 and −15.5 against the serving −4 dB. The
+parser divides, because otherwise a neighbour sorts above the serving cell.
+
+The LTE-serving-cell variant is **still doc-derived** — no capture of a WCDMA
+neighbour seen from LTE has reached this repository, and the same tenths
+assumption is applied to it untested.
+
+`print_neighbours` gives a 3G row its own columns: UARFCN not EARFCN, PSC not
+PCI, RSCP not RSRP. Through the LTE columns it printed `Unknown | EARFCN: ? |
+PCI - | RSRP -` — a row that says nothing while looking like a reading that
+failed. The row cap sorts on `rsrp or rscp`, since keyed on `rsrp` alone every
+WCDMA neighbour scored −999 and the cut kept whichever was listed first.
 
 ## Connection mode is recorded, not inferred
 

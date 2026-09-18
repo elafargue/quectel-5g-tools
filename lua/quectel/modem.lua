@@ -345,11 +345,14 @@ function M:get_ca_info()
 end
 
 --- Get neighbour cells (AT+QENG="neighbourcell")
+-- @param serving_technology Technology of the serving cell, which is what
+--        tells the two same-length WCDMA neighbour layouts apart. Omit it and
+--        a WCDMA neighbour records only its UARFCN.
 -- @return List of neighbour cells
-function M:get_neighbours()
+function M:get_neighbours(serving_technology)
     local resp, err = self:send('AT+QENG="neighbourcell"')
     if not resp then return nil, err end
-    return parser.parse_neighbours(resp)
+    return parser.parse_neighbours(resp, serving_technology)
 end
 
 --- Get IMEI (AT+GSN)
@@ -493,11 +496,20 @@ function M:get_status()
     status.imei = read("imei", "IMEI", self.get_imei)
     status.serving = read("serving", "serving cell", self.get_serving_cell)
     status.ca = read("ca", "carrier aggregation", self.get_ca_info)
-    status.neighbours = read("neighbours", "neighbours", self.get_neighbours)
 
+    -- The serving read comes first on purpose. A WCDMA neighbour line has two
+    -- possible layouts of identical length and nothing in it says which; the
+    -- serving cell's technology does, and it was read from the same modem a
+    -- moment ago. If that read failed we pass nothing and the parser records
+    -- only the UARFCN, which is the right answer to not knowing.
+    utils.add_technology(status)
+    local tech = status.serving and status.serving.technology
+    status.neighbours = read("neighbours", "neighbours",
+        function(self_) return self_:get_neighbours(tech) end)
+
+    -- add_technology already ran above, before the neighbour read needed it.
     utils.add_frequency_info(status)
     utils.add_cell_identity(status)
-    utils.add_technology(status)
     utils.backfill_from_serving(status)
 
     if #errors > 0 then

@@ -267,10 +267,13 @@ function M.print_neighbours(status, max_rows)
     for _, nb in ipairs(status.neighbours) do
         table.insert(sorted, nb)
     end
+    -- RSCP for a 3G row, RSRP for a 4G one. They are not the same quantity
+    -- and are not strictly comparable, but both are a received power in dBm
+    -- over a similar range, and the alternative is worse: keyed on rsrp
+    -- alone every WCDMA neighbour scores -999, so the cut keeps whichever
+    -- happened to be listed first and calls them the strongest.
     table.sort(sorted, function(a, b)
-        local rsrp_a = a.rsrp or -999
-        local rsrp_b = b.rsrp or -999
-        return rsrp_a > rsrp_b
+        return (a.rsrp or a.rscp or -999) > (b.rsrp or b.rscp or -999)
     end)
 
     print(string.format("\n%sNeighbour Cells:%s", M.color(M.Colors.BOLD), M.color(M.Colors.RESET)))
@@ -282,13 +285,30 @@ function M.print_neighbours(status, max_rows)
             break
         end
 
-        local rsrp_q = thresholds.rsrp_quality(nb.rsrp)
-        local freq_str = frequency.format_frequency(nb.arfcn, false)
+        if nb.rat == "wcdma" then
+            -- Its own row rather than the LTE one with blanks in it. A WCDMA
+            -- neighbour has a UARFCN not an EARFCN, a PSC not a PCI, and RSCP
+            -- not RSRP -- related quantities, not the same ones. Rendered
+            -- through the LTE columns it printed "Unknown | EARFCN: ? | PCI -
+            -- | RSRP -", which is a row that says nothing at all while
+            -- looking like a reading that failed.
+            --
+            -- Uncoloured for the same reason the 3G serving cell is:
+            -- thresholds.lua is calibrated for RSRP and does not describe
+            -- RSCP.
+            print(string.format("  %-3s UARFCN %-11s | PSC %3s | RSCP %s | Ec/No %s",
+                "3G", nb.uarfcn or "?", nb.psc or "-",
+                nb.rscp and string.format("%5.1f dBm", nb.rscp) or "    - dBm",
+                nb.ecno and string.format("%5.1f dB", nb.ecno) or "    - dB"))
+        else
+            local rsrp_q = thresholds.rsrp_quality(nb.rsrp)
+            local freq_str = frequency.format_frequency(nb.arfcn, false)
 
-        print(string.format("  %-3s %-18s | EARFCN: %s | PCI %3s | RSRP %s | (%s)",
-            nb.rat:upper(), freq_str, nb.arfcn or "?", nb.pci or "-",
-            M.format_signal(nb.rsrp, rsrp_q, nil, 4),
-            nb.scope or "?"))
+            print(string.format("  %-3s %-18s | EARFCN: %s | PCI %3s | RSRP %s | (%s)",
+                nb.rat:upper(), freq_str, nb.arfcn or "?", nb.pci or "-",
+                M.format_signal(nb.rsrp, rsrp_q, nil, 4),
+                nb.scope or "?"))
+        end
 
         count = count + 1
     end
