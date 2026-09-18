@@ -307,9 +307,26 @@ WCDMA neighbour scored −999 and the cut kept whichever was listed first.
 ## Connection mode is recorded, not inferred
 
 `utils.add_technology()` sets `serving.technology` to `WCDMA`, `LTE`, `NSA` or
-`SA`, and leaves it nil when the serving read failed or found no cell. Telegraf
-writes it as `quectel_serving`, and the dashboard's *Connection mode*
-state-timeline plots it.
+`SA`, and `serving.plmn` to the serving cell's network as `"208-01"`. Both are
+nil when the serving read failed or found no cell. Telegraf writes them as
+`quectel_serving`, and the dashboard's *Connection mode* state-timeline plots
+them as two rows, Mode over Network.
+
+**The PLMN is there because the operator name cannot answer the question it
+looks like it answers.** The name comes from the SIM's service-provider field
+and reads `Free` on 208-15 (Free's own network) and on 208-01 (Orange, under
+national roaming) alike — so the *Network* stat shows the same thing in both,
+and a fall back to 3G that was really a change of network is indistinguishable
+from the modem misbehaving. This happened on the boat: LTE B3 + n28 on 208-15,
+then WCDMA 900 on 208-01, then back. Both timeline rows changing together is a
+change of network; the Mode row changing alone is the same network handing over
+a different technology, which is the one worth investigating.
+
+It is taken from the serving cell rather than from `AT+QSPN` because the
+serving cell is what we are attached to, and QSPN is a separate read that can
+fail on its own. `%02d` restores a two-digit MNC without truncating a
+three-digit one — 310-260 survives — though a three-digit MNC with a leading
+zero would not, the parser having already made a number of it.
 
 It is computed on the router rather than derived in a dashboard query because
 inference from which measurements exist cannot work: a 3G attach writes

@@ -950,12 +950,29 @@ def build_panels(iu: str, su: str, window: str,
         [iql(iu, "A",
              'SELECT last("technology") FROM "quectel_serving" '
              'WHERE $timeFilter GROUP BY time($__interval) fill(null)',
-             "Mode")],
+             "Mode"),
+         # The network actually attached to, under the technology, so the two
+         # line up in time. A fall back to 3G that is really a change of
+         # network shows as both rows changing together; one changing alone
+         # is the other thing.
+         iql(iu, "B",
+             'SELECT last("plmn") FROM "quectel_serving" '
+             'WHERE $timeFilter GROUP BY time($__interval) fill(null)',
+             "Network")],
         influx(iu),
         description=(
-            "Which radio technology the modem was actually attached to, as "
-            "blocks over time. One row per technology; a row that stops is a "
-            "technology it left.\n\n"
+            "Two rows. **Mode** is which radio technology the modem was "
+            "actually attached to, as blocks over time. **Network** is the "
+            "PLMN underneath it -- the network itself, as MCC-MNC.\n\n"
+            "**Read them together.** The stat at the top of the dashboard "
+            "shows the operator *name*, which comes from the SIM and reads "
+            "the same whether you are on your own network or roaming: a Free "
+            "SIM says \"Free\" on 208-15 (Free) and on 208-01 (Orange) "
+            "alike. So a drop to 3G with **both rows changing together** is a "
+            "change of network -- you left home coverage and the roaming "
+            "agreement gave you what it gave you -- while the Mode row "
+            "changing **alone** is the same network handing you a different "
+            "technology, which is the one worth wondering about.\n\n"
             "- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR "
             "at all**, so the SINR panels and `5g-monitor`'s beeps go quiet "
             "rather than wrong while it lasts. Signal is reported as RSCP and "

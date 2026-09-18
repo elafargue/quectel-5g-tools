@@ -90,6 +90,13 @@ test("no errors field when every read succeeds", healthy.errors == nil)
 test("no failed field when every read succeeds", healthy.failed == nil)
 test("serving cell parsed", healthy.serving ~= nil)
 test("NR5G serving cell parsed", healthy.serving and healthy.serving.nr5g ~= nil)
+-- The PLMN of the cell actually attached to, derived on the router because
+-- no dashboard query can work it out. It is a different question from the
+-- operator name, which comes from the SIM and reads the same on a home
+-- network and a roaming one.
+test("the serving PLMN is derived",
+    healthy.serving and healthy.serving.plmn == "222-01")
+
 test("band comes from the modem, not a guess",
     healthy.serving and healthy.serving.nr5g.band == 78)
 -- Numeric forms of the cell identity, so a time-series database can index a

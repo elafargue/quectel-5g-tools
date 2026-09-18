@@ -604,6 +604,15 @@ test("a dash trailing field is nil, not zero",
 local w3s = { serving = w3 }
 utils.add_technology(w3s)
 test("live WCDMA technology is WCDMA", w3.technology == "WCDMA")
+-- 208-01 is Orange; the SIM is Free, whose own network is 208-15. The
+-- operator name reads "Free" either way, so this field is the only thing
+-- that distinguishes home from roaming -- and on the boat the fall back to
+-- 3G was a change of network, not the modem misbehaving.
+test("live WCDMA plmn is 208-01", w3.plmn == "208-01")
+-- A three-digit MNC must survive the padding that restores a two-digit one.
+local us = { serving = { lte = { mcc = 310, mnc = 260 } } }
+utils.add_technology(us)
+test("a three-digit MNC is not truncated", us.serving.plmn == "310-260")
 
 -- AT+QCAINFO answers with a bare OK on 3G: there is no aggregation to report.
 -- That must read as "no carriers", not as a failed read.

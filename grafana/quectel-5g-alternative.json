@@ -1982,7 +1982,7 @@
     {
       "type": "state-timeline",
       "title": "Connection mode",
-      "description": "Which radio technology the modem was actually attached to, as blocks over time. One row per technology; a row that stops is a technology it left.\n\n- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR at all**, so the SINR panels and `5g-monitor`'s beeps go quiet rather than wrong while it lasts. Signal is reported as RSCP and Ec/Io instead, which are related to RSRP and RSRQ but are not the same quantities.\n- **4G LTE** -- LTE with no 5G leg attached.\n- **5G NSA** -- 5G riding on an LTE anchor, the usual case.\n- **5G SA** -- standalone 5G, no LTE underneath.\n\n**Gaps are not a technology.** A break means no sample arrived for that interval -- the router was unreachable or the modem could not be read -- which is a different thing from being attached to nothing, and neither is drawn as a mode.\n\nRecorded by the router rather than inferred here: on a 3G attach the modem reports no LTE and no NR serving cell, so guessing the technology from which measurements exist would call a working link no reading at all.",
+      "description": "Two rows. **Mode** is which radio technology the modem was actually attached to, as blocks over time. **Network** is the PLMN underneath it -- the network itself, as MCC-MNC.\n\n**Read them together.** The stat at the top of the dashboard shows the operator *name*, which comes from the SIM and reads the same whether you are on your own network or roaming: a Free SIM says \"Free\" on 208-15 (Free) and on 208-01 (Orange) alike. So a drop to 3G with **both rows changing together** is a change of network -- you left home coverage and the roaming agreement gave you what it gave you -- while the Mode row changing **alone** is the same network handing you a different technology, which is the one worth wondering about.\n\n- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR at all**, so the SINR panels and `5g-monitor`'s beeps go quiet rather than wrong while it lasts. Signal is reported as RSCP and Ec/Io instead, which are related to RSRP and RSRQ but are not the same quantities.\n- **4G LTE** -- LTE with no 5G leg attached.\n- **5G NSA** -- 5G riding on an LTE anchor, the usual case.\n- **5G SA** -- standalone 5G, no LTE underneath.\n\n**Gaps are not a technology.** A break means no sample arrived for that interval -- the router was unreachable or the modem could not be read -- which is a different thing from being attached to nothing, and neither is drawn as a mode.\n\nRecorded by the router rather than inferred here: on a 3G attach the modem reports no LTE and no NR serving cell, so guessing the technology from which measurements exist would call a working link no reading at all.",
       "gridPos": {
         "h": 6,
         "w": 24,
@@ -2004,6 +2004,17 @@
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "Mode"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "refId": "B",
+          "query": "SELECT last(\"plmn\") FROM \"quectel_serving\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "Network"
         }
       ],
       "fieldConfig": {

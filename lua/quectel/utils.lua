@@ -289,6 +289,30 @@ function M.add_technology(status)
     local serving = status.serving
     if not serving then return end
 
+    -- The PLMN of the cell we are actually on, as "208-01", derived here for
+    -- the same reason technology is: a dashboard cannot work it out.
+    --
+    -- It is not the same question as the operator name. That comes from the
+    -- SIM's service-provider name and reads "Free" whether the modem is on
+    -- Free's own network (208-15) or roaming onto Orange (208-01) -- so a
+    -- panel showing the name alone cannot tell home from roaming, and a fall
+    -- back to 3G that was really a change of network looks like the modem
+    -- misbehaving.
+    --
+    -- Taken from the serving cell rather than from AT+QSPN because the
+    -- serving cell is what we are attached to; QSPN reports the registered
+    -- PLMN, which should agree and is a separate read that can fail on its
+    -- own.
+    --
+    -- "%02d" pads a two-digit MNC back to "01" without truncating a
+    -- three-digit one, since it is a minimum width -- 310-260 survives. A
+    -- three-digit MNC with a leading zero would not, the parser having
+    -- already made a number of it; no such MNC has reached this repository.
+    local cell = serving.wcdma or serving.nr5g or serving.lte
+    if cell and cell.mcc and cell.mnc then
+        serving.plmn = string.format("%d-%02d", cell.mcc, cell.mnc)
+    end
+
     if serving.wcdma then
         serving.technology = "WCDMA"
     elseif serving.nr5g then

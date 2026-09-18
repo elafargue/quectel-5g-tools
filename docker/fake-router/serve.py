@@ -176,6 +176,11 @@ class Radio:
             status["serving"] = {
                 "state": "NOCONN",
                 "technology": "WCDMA",
+                # Roaming: the 3G profile sits on a different PLMN from the
+                # 4G/5G ones, which is what the Connection mode timeline is
+                # meant to make visible -- the real fallback on the boat was
+                # 208-15 (Free) giving way to 208-01 (Orange).
+                "plmn": "208-01",
                 "wcdma": {
                     "mcc": n["mcc"], "mnc": n["mnc"],
                     "lac": "%04X" % random.randint(1, 65535),
@@ -211,9 +216,10 @@ class Radio:
             ]
             return status
 
-        # utils.add_technology() derives this on the router; mirror it here so
-        # the dev stack exercises the same field the dashboard reads.
+        # utils.add_technology() derives these on the router; mirror them here
+        # so the dev stack exercises the same fields the dashboard reads.
         status["serving"]["technology"] = "NSA" if self.nr_up else "LTE"
+        status["serving"]["plmn"] = "%d-%02d" % (n["mcc"], n["mnc"])
 
         if self.nr_up:
             nr = {
