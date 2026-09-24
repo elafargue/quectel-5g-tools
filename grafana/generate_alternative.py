@@ -994,10 +994,76 @@ def build_panels(iu: str, su: str, window: str,
     # Every history panel gets a minimum interval of one poll. It is set here
     # rather than per panel so a new history panel cannot forget it: without
     # it, fill(null) would break the line between every pair of polls.
-    for p in panels:
-        if any("$__interval" in t.get("query", "") for t in p.get("targets", [])):
-            p["interval"] = poll
+    #
+    # It recurses, because a collapsed row carries its panels *inside* itself
+    # rather than as siblings -- and a panel that is out of sight is exactly
+    # the one whose missing interval nobody would notice.
+    def set_interval(ps):
+        for p in ps:
+            if p.get("type") == "row":
+                set_interval(p.get("panels") or [])
+                continue
+            if any("$__interval" in t.get("query", "")
+                   for t in p.get("targets", [])):
+                p["interval"] = poll
 
+    # -- 3G, collapsed -------------------------------------------------------
+    # Its own row, shut by default, because it is empty and irrelevant on any
+    # day the modem stays on 4G or 5G -- and because RSCP and Ec/Io are not
+    # RSRP and SINR and do not belong on the same axes as them.
+    #
+    # Unlike every other row here its panels are nested inside it, which is
+    # what Grafana requires of a collapsed row.
+    three_g = row("3G (WCDMA)", 48, collapsed=True)
+    three_g["panels"] = [
+        timeseries(
+            "RSCP", gp(0, 49, 12, 7),
+            [iql(iu, "A",
+                 'SELECT mean("rscp") FROM "quectel_wcdma" '
+                 'WHERE $timeFilter GROUP BY time($__interval), "uarfcn" '
+                 'fill(null)', "UARFCN $tag_uarfcn")],
+            influx(iu), unit="dBm",
+            description=(
+                "**Received Signal Code Power** -- how strong the 3G cell "
+                "is, the rough equivalent of RSRP on 4G. It is *not* the "
+                "same quantity and is deliberately not plotted on the same "
+                "axes.\n\n"
+                "Uncoloured, unlike the 4G and 5G panels: the thresholds "
+                "this toolkit colours by are calibrated for RSRP and say "
+                "nothing about RSCP, and inventing a second set for a panel "
+                "would be a worse answer than leaving it plain. As a rough "
+                "guide, better than -85 dBm is comfortable, around -95 is "
+                "workable and below -105 is close to unusable.\n\n"
+                "Empty whenever the modem is on 4G or 5G, which is most of "
+                "the time -- there is no 3G cell to measure, and that is why "
+                "this row is shut by default."),
+        ),
+        timeseries(
+            "Ec/Io", gp(12, 49, 12, 7),
+            [iql(iu, "A",
+                 'SELECT mean("ecio") FROM "quectel_wcdma" '
+                 'WHERE $timeFilter GROUP BY time($__interval), "uarfcn" '
+                 'fill(null)', "UARFCN $tag_uarfcn")],
+            influx(iu), unit="dB",
+            description=(
+                "**Ec/Io** -- how clean the 3G signal is rather than how "
+                "strong: the wanted energy against everything else on the "
+                "same frequency. It is the closest 3G has to SINR, and on "
+                "WCDMA it is usually the better predictor of whether the "
+                "link is usable, because every other user on the cell is "
+                "interference.\n\n"
+                "Roughly: better than -10 dB is good, -15 is getting "
+                "crowded, and below -20 the cell is barely holding on. The "
+                "boat saw a neighbour at -22.\n\n"
+                "**There is no SINR at all on 3G** -- the modem reports no "
+                "such field -- so the SINR panels above and `5g-monitor`'s "
+                "beeps go quiet rather than wrong while a 3G attach "
+                "lasts."),
+        ),
+    ]
+    panels.append(three_g)
+
+    set_interval(panels)
     return panels
 
 

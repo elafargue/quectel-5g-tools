@@ -304,6 +304,29 @@ PCI - | RSRP -` — a row that says nothing while looking like a reading that
 failed. The row cap sorts on `rsrp or rscp`, since keyed on `rsrp` alone every
 WCDMA neighbour scored −999 and the cut kept whichever was listed first.
 
+## The 3G serving cell had nowhere to go
+
+Telegraf wrote `quectel_lte` and `quectel_nr5g` and nothing for WCDMA, so a
+3G attach recorded its technology, its PLMN and its *neighbours'* signal while
+losing the one number anyone asks for first: how strong the cell actually in
+use was. Two hours of it on the boat, with the neighbours plotted and the
+serving cell absent.
+
+`quectel_wcdma` fixes that, tagged on `uarfcn` alone — the frequency, and
+bounded, the same choice `band` is on `quectel_lte`. `lac`, `cell_id` and
+`psc` are fields, being a fresh value for every cell ever visited.
+
+Its panels live in a **collapsed row**, which is the only row here whose
+panels are nested inside it rather than sitting as siblings — Grafana requires
+that of a collapsed row, and the minimum-interval pass in `build_panels`
+recurses for exactly that reason. A panel out of sight is the one whose
+missing interval nobody would notice.
+
+RSCP and Ec/Io are plotted **uncoloured**, unlike every other signal panel.
+`thresholds.lua` is calibrated for RSRP and says nothing about either, and a
+second set of thresholds invented for one panel would diverge from what
+`5g-monitor` shows. The descriptions give the ranges in words instead.
+
 ## Connection mode is recorded, not inferred
 
 `utils.add_technology()` sets `serving.technology` to `WCDMA`, `LTE`, `NSA` or

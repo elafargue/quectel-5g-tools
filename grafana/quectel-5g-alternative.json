@@ -2089,6 +2089,208 @@
       },
       "interval": "60s",
       "id": 21
+    },
+    {
+      "type": "row",
+      "title": "3G (WCDMA)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "RSCP",
+          "description": "**Received Signal Code Power** -- how strong the 3G cell is, the rough equivalent of RSRP on 4G. It is *not* the same quantity and is deliberately not plotted on the same axes.\n\nUncoloured, unlike the 4G and 5G panels: the thresholds this toolkit colours by are calibrated for RSRP and say nothing about RSCP, and inventing a second set for a panel would be a worse answer than leaving it plain. As a rough guide, better than -85 dBm is comfortable, around -95 is workable and below -105 is close to unusable.\n\nEmpty whenever the modem is on 4G or 5G, which is most of the time -- there is no 3G cell to measure, and that is why this row is shut by default.",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 49
+          },
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "influxdb",
+                "uid": "${DS_INFLUXDB}"
+              },
+              "refId": "A",
+              "query": "SELECT mean(\"rscp\") FROM \"quectel_wcdma\" WHERE $timeFilter GROUP BY time($__interval), \"uarfcn\" fill(null)",
+              "rawQuery": true,
+              "resultFormat": "time_series",
+              "alias": "UARFCN $tag_uarfcn"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "dBm"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "mean",
+                "max",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "interval": "60s",
+          "id": 23
+        },
+        {
+          "type": "timeseries",
+          "title": "Ec/Io",
+          "description": "**Ec/Io** -- how clean the 3G signal is rather than how strong: the wanted energy against everything else on the same frequency. It is the closest 3G has to SINR, and on WCDMA it is usually the better predictor of whether the link is usable, because every other user on the cell is interference.\n\nRoughly: better than -10 dB is good, -15 is getting crowded, and below -20 the cell is barely holding on. The boat saw a neighbour at -22.\n\n**There is no SINR at all on 3G** -- the modem reports no such field -- so the SINR panels above and `5g-monitor`'s beeps go quiet rather than wrong while a 3G attach lasts.",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 49
+          },
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "influxdb",
+                "uid": "${DS_INFLUXDB}"
+              },
+              "refId": "A",
+              "query": "SELECT mean(\"ecio\") FROM \"quectel_wcdma\" WHERE $timeFilter GROUP BY time($__interval), \"uarfcn\" fill(null)",
+              "rawQuery": true,
+              "resultFormat": "time_series",
+              "alias": "UARFCN $tag_uarfcn"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "dB"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "mean",
+                "max",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "interval": "60s",
+          "id": 24
+        }
+      ],
+      "id": 22
     }
   ],
   "time": {
