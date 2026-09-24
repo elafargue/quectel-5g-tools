@@ -220,7 +220,7 @@ end
 --     frequency.lua's tables and formulae are for E-UTRA and NR only. Naming
 --     it `arfcn` would invite a confident, wrong frequency.
 --   * `rscp` and `ecio`, not `rsrp` and `rsrq`. Received Signal Code Power
---     and Ec/Io are related quantities but not the same ones, and the
+--     and Ec/No are related quantities but not the same ones, and the
 --     thresholds in thresholds.lua do not apply to them.
 --   * there is no SINR at all in WCDMA. The manual lists no such field, so
 --     anything aiming by SINR -- 5g-monitor's beeps, the SINR panels -- has
@@ -228,6 +228,11 @@ end
 --
 -- `lac` and `cell_id` stay strings for the same reason `tac` does: they are
 -- hexadecimal, and coercing them to numbers loses leading characters.
+-- The serving cell's quality field is <ecio> in Quectel's manual while the
+-- neighbour line's is <ecno>, for the same CPICH measurement. Both names are
+-- kept as the modem gives them -- a parser that renamed them would be harder
+-- to check against the manual -- and the display calls both Ec/No, which is
+-- the 3GPP term.
 local function parse_wcdma_fields(values, o)
     return {
         mcc = tonumber(values[o]),

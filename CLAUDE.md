@@ -261,6 +261,14 @@ Three deliberate non-reuses of the LTE/NR names:
 - **`rscp`/`ecio`, not `rsrp`/`rsrq`.** Related quantities, not the same ones,
   and `thresholds.lua` does not apply to them — so the display prints them
   uncoloured.
+
+  The field is `ecio` on the serving cell and `ecno` on a neighbour because
+  Quectel's manual names them that way for the same CPICH measurement. Both
+  are kept as the modem gives them, since a parser that renamed them would be
+  harder to check against the manual — but **everything user-facing says
+  Ec/No**, which is the 3GPP term. The dashboard used to say Ec/Io on the
+  serving panel and Ec/No in the neighbour table: one quantity, two names, one
+  screen.
 - **There is no SINR in WCDMA at all.** The manual lists no such field. So
   `sinr_for_beeps()` returns nil on 3G and `5g-monitor` falls silent rather
   than beeping a number that does not exist. Silence is the correct feedback
@@ -322,7 +330,7 @@ that of a collapsed row, and the minimum-interval pass in `build_panels`
 recurses for exactly that reason. A panel out of sight is the one whose
 missing interval nobody would notice.
 
-RSCP and Ec/Io are plotted **uncoloured**, unlike every other signal panel.
+RSCP and Ec/No are plotted **uncoloured**, unlike every other signal panel.
 `thresholds.lua` is calibrated for RSRP and says nothing about either, and a
 second set of thresholds invented for one panel would diverge from what
 `5g-monitor` shows. The descriptions give the ranges in words instead.

@@ -976,7 +976,7 @@ def build_panels(iu: str, su: str, window: str,
             "- **3G** (`WCDMA`) -- the fallback. Slow, and it has **no SINR "
             "at all**, so the SINR panels and `5g-monitor`'s beeps go quiet "
             "rather than wrong while it lasts. Signal is reported as RSCP and "
-            "Ec/Io instead, which are related to RSRP and RSRQ but are not "
+            "Ec/No instead, which are related to RSRP and RSRQ but are not "
             "the same quantities.\n"
             "- **4G LTE** -- LTE with no 5G leg attached.\n"
             "- **5G NSA** -- 5G riding on an LTE anchor, the usual case.\n"
@@ -1009,7 +1009,7 @@ def build_panels(iu: str, su: str, window: str,
 
     # -- 3G, collapsed -------------------------------------------------------
     # Its own row, shut by default, because it is empty and irrelevant on any
-    # day the modem stays on 4G or 5G -- and because RSCP and Ec/Io are not
+    # day the modem stays on 4G or 5G -- and because RSCP and Ec/No are not
     # RSRP and SINR and do not belong on the same axes as them.
     #
     # Unlike every other row here its panels are nested inside it, which is
@@ -1039,14 +1039,18 @@ def build_panels(iu: str, su: str, window: str,
                 "this row is shut by default."),
         ),
         timeseries(
-            "Ec/Io", gp(12, 49, 12, 7),
+            "Ec/No", gp(12, 49, 12, 7),
             [iql(iu, "A",
+                 # The field is ecio and the label is Ec/No: Quectel names the
+                 # serving field <ecio> and the neighbour field <ecno> for the
+                 # same CPICH measure, so the neighbour table said Ec/No while
+                 # this panel said Ec/Io. One quantity, one name on screen.
                  'SELECT mean("ecio") FROM "quectel_wcdma" '
                  'WHERE $timeFilter GROUP BY time($__interval), "uarfcn" '
                  'fill(null)', "UARFCN $tag_uarfcn")],
             influx(iu), unit="dB",
             description=(
-                "**Ec/Io** -- how clean the 3G signal is rather than how "
+                "**Ec/No** -- how clean the 3G signal is rather than how "
                 "strong: the wanted energy against everything else on the "
                 "same frequency. It is the closest 3G has to SINR, and on "
                 "WCDMA it is usually the better predictor of whether the "

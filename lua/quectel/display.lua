@@ -140,7 +140,7 @@ function M.print_serving_cell(status)
     -- through to "no signal" -- a modem carrying traffic reported as a modem
     -- carrying none.
     --
-    -- RSCP and Ec/Io are not RSRP and RSRQ and are deliberately not coloured
+    -- RSCP and Ec/No are not RSRP and RSRQ and are deliberately not coloured
     -- by thresholds meant for those; the numbers are shown plainly. There is
     -- no SINR in WCDMA to show at all, which is why the line says so rather
     -- than printing a blank field that reads as a missing measurement.
@@ -149,7 +149,11 @@ function M.print_serving_cell(status)
             M.color(M.Colors.YELLOW), M.color(M.Colors.RESET),
             wcdma.lac or "?", wcdma.cell_id or "?", wcdma.psc or "?"))
 
-        print(string.format("  RSCP: %s dBm | Ec/Io: %s dB | SINR: n/a in 3G",
+        -- "Ec/No", though the field is called ecio: Quectel's manual names
+        -- the serving-cell field <ecio> and the neighbour field <ecno> for
+        -- the same CPICH quality measure. The parser mirrors the modem, the
+        -- display picks one name, and 3GPP's is Ec/No.
+        print(string.format("  RSCP: %s dBm | Ec/No: %s dB | SINR: n/a in 3G",
             wcdma.rscp or "?", wcdma.ecio or "?"))
 
         print(string.format("  UARFCN: %s", wcdma.uarfcn or "?"))
