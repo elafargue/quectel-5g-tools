@@ -1679,7 +1679,7 @@
     {
       "type": "timeseries",
       "title": "Neighbours reported",
-      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one), **stacked, so the top of the stack is the total heard**. The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nOn 3G the split is by radio instead: a WCDMA neighbour line carries no intra/inter, so those arrive as a single `wcdma` series.\n\n**A gap in `inter` while `intra` carries on means no neighbours were heard on other frequencies** -- there are none to count, so there is no line, and the top of the stack is `intra` alone, which is the right total. A gap in both is a poll that returned nothing: the router or the modem could not be read, which is not the same as hearing no one.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
+      "description": "How many neighbouring cells the modem could hear at each poll, split into `intra` (same frequency as the serving cell) and `inter` (a different one), **stacked, so the top of the stack is the total heard**. The cells themselves are listed in *Neighbour cells* at the top of the dashboard.\n\n**A thinning count is an early warning of running out of coverage, and it usually moves before RSRP does** -- you lose the alternatives before you lose the cell you are on.\n\nOn 3G the split is by radio instead. A WCDMA neighbour line carries no intra/inter, so those arrive as a single `wcdma` series -- and the LTE cells the modem can still hear from a 3G attach, the ones it would hand back to, arrive as `lte, heard from 3G`: the modem does not classify those as intra or inter either.\n\n**A gap in `inter` while `intra` carries on means no neighbours were heard on other frequencies** -- there are none to count, so there is no line, and the top of the stack is `intra` alone, which is the right total. A gap in both is a poll that returned nothing: the router or the modem could not be read, which is not the same as hearing no one.\n\nAt wider zoom each point averages the polls inside it, so 3.5 means it heard 3 and 4 by turns.\n\nKept for 24 hours only -- neighbour lists churn constantly on a moving vessel, so they live in a short-retention bucket of their own. Ranges longer than a day will look empty here.",
       "gridPos": {
         "h": 6,
         "w": 12,
@@ -1697,10 +1697,21 @@
             "uid": "${DS_INFLUXDB_SHORT}"
           },
           "refId": "A",
-          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_neighbour\" WHERE $timeFilter GROUP BY time(1s), \"scope\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(null)",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_neighbour\" WHERE $timeFilter AND \"scope\" != '' GROUP BY time(1s), \"scope\" fill(none)) WHERE $timeFilter GROUP BY time($__interval), \"scope\" fill(null)",
           "rawQuery": true,
           "resultFormat": "time_series",
           "alias": "$tag_scope"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB_SHORT}"
+          },
+          "refId": "C",
+          "query": "SELECT mean(\"n\") FROM (SELECT count(\"rsrp\") AS \"n\" FROM \"quectel_neighbour\" WHERE $timeFilter AND \"scope\" = '' GROUP BY time(1s) fill(none)) WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "lte, heard from 3G"
         },
         {
           "datasource": {

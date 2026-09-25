@@ -495,6 +495,34 @@ function M.parse_neighbours(text, serving_technology)
                 end
 
                 table.insert(neighbours, n)
+            elseif serving_technology == "WCDMA" then
+                -- An LTE neighbour seen *from* a WCDMA serving cell, which
+                -- the manual gives its own layout in the "In WCDMA mode"
+                -- section -- and it is the LTE-mode one with RSRP and RSRQ
+                -- the other way round:
+                --
+                --   LTE mode:   ...,<PCID>,<RSRQ>,<RSRP>,<RSSI>,<SINR>,...
+                --   WCDMA mode: ...,<PCID>,<RSRP>,<RSRQ>,<srxlev>
+                --
+                -- Read with the LTE-mode order it stored an RSRQ of about
+                -- -12 as an RSRP, which is not a power any cell transmits
+                -- and is strong enough that print_neighbours sorted those
+                -- rows above every real neighbour -- the same failure a
+                -- WCDMA neighbour read as an LTE one used to have, arriving
+                -- from the opposite direction.
+                --
+                -- There is no intra/inter suffix on this line, so scope
+                -- stays nil: from a WCDMA cell every LTE neighbour is on
+                -- another radio, and the modem does not classify them.
+                table.insert(neighbours, {
+                    scope = scope,
+                    rat = rat:lower(),
+                    arfcn = tonumber(values[3]),
+                    pci = tonumber(values[4]),
+                    rsrp = tonumber(values[5]),
+                    rsrq = tonumber(values[6]),
+                    srxlev = tonumber(values[7]),
+                })
             else
                 table.insert(neighbours, {
                     scope = scope,

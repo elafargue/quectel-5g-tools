@@ -306,6 +306,31 @@ The LTE-serving-cell variant is **still doc-derived** — no capture of a WCDMA
 neighbour seen from LTE has reached this repository, and the same tenths
 assumption is applied to it untested.
 
+### And an LTE neighbour seen from 3G is transposed
+
+The same trap in the other direction, found from the boat's dashboard: the
+*Neighbours reported* panel carried a nameless series drawn as `{scope=""}`.
+It counted `rsrp`, so those rows had an RSRP and no scope — and only one kind
+of row can.
+
+The manual gives an LTE neighbour its own layout under "In WCDMA mode", and it
+is the LTE-mode one with the two signal fields swapped:
+
+```
+LTE mode:   "neighbourcell intra|inter","LTE",<earfcn>,<PCID>,<RSRQ>,<RSRP>,<RSSI>,<SINR>,…
+WCDMA mode: "neighbourcell","LTE",       <earfcn>,<PCID>,<RSRP>,<RSRQ>,<srxlev>
+```
+
+Read with the LTE-mode order, an RSRQ of about −12 was stored as an RSRP —
+not a power any cell transmits, and strong enough that `print_neighbours`
+sorted those rows above every real neighbour. `serving_technology` picks the
+layout, as it does for WCDMA neighbours.
+
+There is no intra/inter suffix on that line, so **scope stays nil** rather
+than being chosen. The panel splits on `"scope" != ''` and `"scope" = ''`
+instead, which is why it has three targets: `intra`/`inter`, then `lte, heard
+from 3G`, then `wcdma`.
+
 `print_neighbours` gives a 3G row its own columns: UARFCN not EARFCN, PSC not
 PCI, RSCP not RSRP. Through the LTE columns it printed `Unknown | EARFCN: ? |
 PCI - | RSRP -` — a row that says nothing while looking like a reading that

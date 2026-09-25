@@ -214,6 +214,22 @@ class Radio:
                 }
                 for _ in range(random.randint(2, 4))
             ]
+            # LTE neighbours are reported from a 3G serving cell too -- the
+            # cells it would hand back to. They arrive on a line with no
+            # intra/inter suffix and with RSRP and RSRQ the other way round
+            # from the LTE-mode layout, which is what makes them worth
+            # emitting here: read with the wrong order an RSRQ of -12 becomes
+            # an RSRP and sorts above every real neighbour.
+            for _ in range(random.randint(1, 3)):
+                status["neighbours"].append({
+                    "rat": "lte",
+                    "arfcn": random.choice([1675, 1550, 3743]),
+                    "pci": random.randint(0, 503),
+                    "rsrp": round(random.uniform(-115, -88)),
+                    "rsrq": round(random.uniform(-19, -8)),
+                    "srxlev": random.randint(0, 40),
+                    # no scope: the modem sends no intra/inter on this line
+                })
             return status
 
         # utils.add_technology() derives these on the router; mirror them here

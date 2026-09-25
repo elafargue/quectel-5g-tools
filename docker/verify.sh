@@ -259,8 +259,12 @@ except Exception:
     sys.exit(0)
 for p in d.get("dashboard", {}).get("panels", []):
     if p.get("title") == "Neighbours reported":
-        for t in p.get("targets", []):
-            print(t.get("datasource", {}).get("uid", ""))
+        # The set, not one line per target. The panel has had one target,
+        # then two, then three; printing each and comparing the whole string
+        # made adding a target look like a wiring fault.
+        for uid in sorted({t.get("datasource", {}).get("uid", "")
+                           for t in p.get("targets", [])}):
+            print(uid)
 ' || true)
 [ "$nbr_ds" = "quectel-influx-short" ] \
     && check 1 "the neighbour panel queries the short-retention datasource" \

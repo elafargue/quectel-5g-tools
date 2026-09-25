@@ -650,6 +650,36 @@ test("both neighbours are weaker than the serving cell",
         and wn[1].ecno < w3.wcdma.ecio and wn[2].ecno < w3.wcdma.ecio)
 -- RSRP stays absent: it is a different quantity and nothing measured one.
 test("a WCDMA neighbour has no rsrp", wn[1].rsrp == nil)
+
+-- An LTE neighbour seen *from* the 3G cell. The manual gives this its own
+-- layout under "In WCDMA mode", and it is the LTE-mode one with RSRP and RSRQ
+-- transposed and no RSSI or SINR at all:
+--
+--   LTE mode:   ...,<PCID>,<RSRQ>,<RSRP>,<RSSI>,<SINR>,...
+--   WCDMA mode: ...,<PCID>,<RSRP>,<RSRQ>,<srxlev>
+--
+-- Doc-derived in its values, but the *case* is not hypothetical: the boat's
+-- dashboard showed six such samples as an unnamed series, which is how this
+-- was found. Read with the LTE-mode order they stored an RSRQ as an RSRP.
+local FROM_3G = '+QENG: "neighbourcell","LTE",1675,424,-95,-12,34\n\nOK'
+
+local l3 = parser.parse_neighbours(FROM_3G, "WCDMA")[1]
+test("LTE neighbour from 3G keeps its earfcn", l3.arfcn == 1675)
+test("LTE neighbour from 3G keeps its pci", l3.pci == 424)
+-- -95 dBm is a signal strength. -12 is not, and sorted above every real
+-- neighbour when it was read as one.
+test("LTE neighbour from 3G reads RSRP from field 5", l3.rsrp == -95)
+test("LTE neighbour from 3G reads RSRQ from field 6", l3.rsrq == -12)
+test("LTE neighbour from 3G has srxlev, not rssi",
+    l3.srxlev == 34 and l3.rssi == nil)
+-- No intra/inter suffix on the line, so no scope is recorded rather than one
+-- being chosen.
+test("LTE neighbour from 3G has no scope", l3.scope == nil)
+
+-- The same line from an LTE serving cell keeps the LTE-mode order, which is
+-- what every other fixture in this file exercises.
+local l4 = parser.parse_neighbours(FROM_3G, "LTE")[1]
+test("the LTE-mode order is unchanged", l4.rsrq == -95 and l4.rsrp == -12)
 print("")
 
 print("Test 22: WCDMA serving cell (doc-derived, not a live capture)")

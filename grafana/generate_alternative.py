@@ -803,13 +803,28 @@ def build_panels(iu: str, su: str, window: str,
         # drew a flat zero through a 3G attach: neighbours plainly there,
         # reported as none. The 3G one groups by rat rather than scope,
         # since a WCDMA neighbour line carries no intra/inter at all.
+        # Three targets, not two. An LTE neighbour reported from a 3G
+        # serving cell carries no intra/inter suffix, so its scope tag is
+        # empty -- and grouped in with the others it arrived as a series
+        # Grafana had no name for and drew as {scope=""}. Splitting on the
+        # tag gives it one. `"scope" = ''` matches a point with no scope tag
+        # at all, which is what these are.
         [iql(su, "A",
              'SELECT mean("n") FROM ('
              'SELECT count("rsrp") AS "n" FROM "quectel_neighbour" '
-             'WHERE $timeFilter GROUP BY time(1s), "scope" fill(none)'
+             'WHERE $timeFilter AND "scope" != \'\' '
+             'GROUP BY time(1s), "scope" fill(none)'
              ') WHERE $timeFilter '
              'GROUP BY time($__interval), "scope" fill(null)',
              "$tag_scope"),
+         iql(su, "C",
+             'SELECT mean("n") FROM ('
+             'SELECT count("rsrp") AS "n" FROM "quectel_neighbour" '
+             'WHERE $timeFilter AND "scope" = \'\' '
+             'GROUP BY time(1s) fill(none)'
+             ') WHERE $timeFilter '
+             'GROUP BY time($__interval) fill(null)',
+             "lte, heard from 3G"),
          iql(su, "B",
              'SELECT mean("n") FROM ('
              'SELECT count("rscp") AS "n" FROM "quectel_neighbour" '
@@ -827,9 +842,12 @@ def build_panels(iu: str, su: str, window: str,
             "**A thinning count is an early warning of running out of "
             "coverage, and it usually moves before RSRP does** -- you lose "
             "the alternatives before you lose the cell you are on.\n\n"
-            "On 3G the split is by radio instead: a WCDMA neighbour line "
+            "On 3G the split is by radio instead. A WCDMA neighbour line "
             "carries no intra/inter, so those arrive as a single `wcdma` "
-            "series.\n\n"
+            "series -- and the LTE cells the modem can still hear from a 3G "
+            "attach, the ones it would hand back to, arrive as `lte, heard "
+            "from 3G`: the modem does not classify those as intra or inter "
+            "either.\n\n"
             "**A gap in `inter` while `intra` carries on means no neighbours "
             "were heard on other frequencies** -- there are none to count, so "
             "there is no line, and the top of the stack is `intra` alone, "
