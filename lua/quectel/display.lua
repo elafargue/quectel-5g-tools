@@ -187,10 +187,15 @@ function M.print_serving_cell(status)
         local sinr_q = thresholds.sinr_quality(nr.sinr)
 
         print("")
-        print(string.format("%s[5G-NSA - Band n%s]%s PCI: %s",
-            M.color(M.Colors.GREEN), nr.band or "?", M.color(M.Colors.RESET),
-            nr.pci or "?"))
-
+        -- SA or NSA, from what was actually attached rather than assumed.
+        -- This said 5G-NSA unconditionally, so a standalone cell -- no LTE
+        -- anchor anywhere in the response -- announced itself as non-
+        -- standalone, which is the one thing the header exists to say.
+        local nr_label = (status.serving.technology == "SA")
+            and "5G-SA" or "5G-NSA"
+        print(string.format("%s[%s - Band n%s]%s PCI: %s",
+            M.color(M.Colors.GREEN), nr_label, nr.band or "?",
+            M.color(M.Colors.RESET), nr.pci or "?"))
         print(string.format("  RSRP: %s dBm | RSRQ: %s dB | SINR: %s dB",
             M.format_signal(nr.rsrp, rsrp_q, nil, 4),
             M.format_signal(nr.rsrq, rsrq_q, nil, 3),

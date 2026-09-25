@@ -9,6 +9,7 @@ package.path = "lua/?.lua;lua/?/init.lua;/usr/lib/lua/?.lua;/usr/lib/lua/?/init.
 
 local parser = require("quectel.parser")
 local utils = require("quectel.utils")
+local frequency = require("quectel.frequency")
 
 local passed = 0
 local failed = 0
@@ -804,6 +805,89 @@ test("no pci is guessed", mixed[2].pci == nil)
 test("no rsrp is guessed", mixed[2].rsrp == nil)
 test("no rsrq is guessed", mixed[2].rsrq == nil)
 test("it is not mistaken for an LTE arfcn", mixed[2].arfcn == nil)
+print("")
+
+-- Test 25: 5G standalone, live -- Google Fi on T-Mobile US (310/260)
+--
+-- The first SA capture to reach this repository. parse_nr5g_sa_fields cited a
+-- 310/260 line in a code comment and nothing more; this is that network, and
+-- the field order holds.
+--
+-- AT+COPS? ended in 11 -- NR connected to a 5G core -- and AT+C5GREG? read
+-- 0,1 while CREG and CGREG were both 0,0: registered on 5GS and on nothing
+-- else, which is what standalone means. AT+CSQ answered 99,99, "not known or
+-- not detectable", being a GSM-era command with no meaning on a 5G core.
+print("Test 25: 5G standalone from a live Google Fi/T-Mobile attach")
+
+local sa5 = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN","NR5G-SA","TDD",310,260,200DFA160,992,' ..
+    '3A6800,663360,77,6,-73,-10,34,1,-\n\nOK')
+
+test("SA serving cell parsed", sa5.nr5g ~= nil)
+test("SA has no LTE anchor", sa5.lte == nil)
+test("SA duplex TDD", sa5.nr5g and sa5.nr5g.duplex == "TDD")
+test("SA mcc 310", sa5.nr5g and sa5.nr5g.mcc == 310)
+-- A three-digit MNC, where every other fixture here has two.
+test("SA mnc 260", sa5.nr5g and sa5.nr5g.mnc == 260)
+-- Nine hex digits: an NR cell identity is 36 bits where an LTE one is 28.
+test("SA nine-digit cell id stays a string",
+    sa5.nr5g and sa5.nr5g.cell_id == "200DFA160")
+-- Six hex digits: an NR TAC is 24 bits where an LTE one is 16.
+test("SA six-digit tac stays a string", sa5.nr5g and sa5.nr5g.tac == "3A6800")
+test("SA pci 992", sa5.nr5g and sa5.nr5g.pci == 992)
+test("SA arfcn 663360", sa5.nr5g and sa5.nr5g.arfcn == 663360)
+test("SA band 77", sa5.nr5g and sa5.nr5g.band == 77)
+test("SA rsrp -73", sa5.nr5g and sa5.nr5g.rsrp == -73)
+test("SA rsrq -10", sa5.nr5g and sa5.nr5g.rsrq == -10)
+test("SA sinr 34", sa5.nr5g and sa5.nr5g.sinr == 34)
+test("SA scs 1", sa5.nr5g and sa5.nr5g.scs == 1)
+
+local sa5s = { serving = sa5 }
+utils.add_technology(sa5s)
+test("SA technology is SA", sa5.technology == "SA")
+-- The three-digit MNC survives the padding that restores a two-digit one.
+test("SA plmn is 310-260", sa5.plmn == "310-260")
+
+-- 663360 is above n78's top channel (653333), so n77 is the only band that
+-- contains it -- the rare NR carrier an ARFCN alone can identify.
+test("663360 is n77 and not n78",
+    frequency.nr_band_contains(663360, 77) == true
+        and frequency.nr_band_contains(663360, 78) == false)
+
+-- The five-field NR5G PCC, which only a standalone attach emits. Every
+-- earlier fixture for this shape was constructed.
+local sa5ca = parser.parse_qcainfo(
+    '+QCAINFO: "PCC",663360,6,"NR5G BAND 77",992\n\nOK')
+test("SA PCC is the NR carrier", sa5ca.pcc and sa5ca.pcc.rat == "5g")
+test("SA PCC band 77", sa5ca.pcc and sa5ca.pcc.band == 77)
+test("SA PCC arfcn 663360", sa5ca.pcc and sa5ca.pcc.arfcn == 663360)
+test("SA PCC pci 992", sa5ca.pcc and sa5ca.pcc.pci == 992)
+test("SA has no secondary carriers", #sa5ca.scc == 0)
+
+-- QCAINFO's third column is resource blocks on LTE and a bandwidth index on
+-- NR. Index 6 is 40 MHz; read as an RB count it is 1.4, which is a real
+-- enough number to survive the backfill that rescues every other index.
+local sa5st = { serving = sa5, ca = sa5ca }
+utils.add_frequency_info(sa5st)
+utils.backfill_from_serving(sa5st)
+test("SA serving bandwidth index 6 is 40 MHz",
+    sa5.nr5g.bandwidth_mhz == 40)
+test("SA carrier bandwidth index 6 is 40 MHz, not 1.4",
+    sa5ca.pcc.bandwidth_mhz == 40)
+test("SA carrier frequency is 3950.4 MHz",
+    math.abs(sa5ca.pcc.frequency_mhz - 3950.4) < 0.001)
+
+-- No neighbours at all on this attach: the response was a bare OK.
+test("a bare OK neighbour response is no neighbours",
+    #parser.parse_neighbours("OK", "SA") == 0)
+
+-- The operator name comes from the SIM and the PLMN from the network: Google
+-- Fi is an MVNO riding T-Mobile, so they differ without either being wrong --
+-- the same shape as Free on Orange, from a different direction.
+local sa5op = parser.parse_qspn(
+    '+QSPN: "Google Fi","Google Fi","",0,"310260"\n\nOK')
+test("SA operator name is the MVNO", sa5op and sa5op.operator == "Google Fi")
+test("SA operator plmn is the host network", sa5op and sa5op.mcc_mnc == "310260")
 print("")
 
 print("=== Results ===")

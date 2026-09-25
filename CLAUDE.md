@@ -187,6 +187,49 @@ It also adds, against KT's:
   field 1 rather than from whichever field happened to be non-empty. The
   parser deliberately does not expose SPN; add it if something ever needs it.
 
+### Fourth operator capture: Google Fi on T-Mobile US, 5G standalone
+
+Test 25, and the first SA attach to reach this repository.
+`parse_nr5g_sa_fields` had cited a 310/260 line in a code comment and nothing
+more; this is that network, and the field order holds. `AT+COPS?` ended in
+**11** — NR connected to a 5G core — with `AT+C5GREG?` at `0,1` while `CREG`
+and `CGREG` were both `0,0`: registered on 5GS and on nothing else, which is
+what standalone means. `AT+CSQ` answered `99,99`, being a GSM-era command with
+no meaning on a 5G core.
+
+It found two bugs that no NSA capture could:
+
+- **The serving-cell header said `5G-NSA` unconditionally.** A standalone cell
+  — no LTE anchor anywhere in the response — announced itself as non-
+  standalone, which is the one thing that header exists to say. It reads
+  `serving.technology` now.
+- **An NR carrier's bandwidth was read from the LTE table.** QCAINFO's third
+  column is a resource-block count on LTE and a bandwidth *index* on NR, and
+  `enrich_carrier` applied the LTE reading to both. Most NR indexes fall
+  outside the LTE table, come back nil, and are rescued by
+  `backfill_from_serving()` — which is why this survived every earlier
+  capture. Only **6** and **15** collide with real RB counts, answering 1.4
+  and 3 MHz, and being non-nil they survive the backfill. This network uses
+  index 6, so a 40 MHz n77 carrier displayed as **1.4 MHz**.
+
+Other things only this capture carries: a **three-digit MNC** (310-260, where
+every other fixture has two), a **nine-digit cell ID** (an NR cell identity is
+36 bits against LTE's 28) and a **six-digit TAC** (24 bits against 16) — both
+kept as strings for the usual reason. Its ARFCN 663360 sits above n78's top
+channel, so n77 is the only band containing it: the rare NR carrier an ARFCN
+alone can identify.
+
+Google Fi is an MVNO on T-Mobile, so the operator name and the PLMN differ
+without either being wrong — the same shape as Free on Orange, arrived at from
+the other direction.
+
+**No NR neighbour layout is known.** This attach reported none, and the manual
+documents an "In LTE mode" and an "In WCDMA mode" section and nothing else.
+`parse_neighbours` branches on `WCDMA` and falls through to the LTE layout for
+everything else, so an `NR5G` neighbour line would be read with LTE field
+offsets — the same trap WCDMA neighbours were in. Nothing has ever produced
+one to check against.
+
 ## SINR vs RSSNR
 
 **Important**: The `AT+QCAINFO` command reports a field that Quectel documentation calls `rssnr`, which is **NOT** the same as SINR from `AT+QENG="servingcell"`.

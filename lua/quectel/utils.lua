@@ -173,8 +173,25 @@ function M.add_frequency_info(status)
                     carrier.frequency_mhz = frequency.earfcn_to_mhz(carrier.arfcn)
                 end
             end
+            -- QCAINFO's third column is a resource-block count on an LTE
+            -- carrier and a bandwidth *index* on an NR one. The field is
+            -- named for the LTE reading because that is what the manual
+            -- calls the column; the NR reading needs the other table.
+            --
+            -- Read as RB counts, most NR indexes fall outside the LTE table
+            -- and come back nil, and backfill_from_serving() then fills them
+            -- from the serving cell -- which is why this was invisible. Only
+            -- 6 and 15 collide with real RB counts, answering 1.4 and 3 MHz,
+            -- and being non-nil they survive the backfill. A 40 MHz n77
+            -- carrier displayed as 1.4 MHz.
             if carrier.bandwidth_rb then
-                carrier.bandwidth_mhz = frequency.lte_bandwidth_mhz(carrier.bandwidth_rb, true)
+                if carrier.rat == "5g" then
+                    carrier.bandwidth_mhz =
+                        frequency.nr5g_bandwidth_mhz(carrier.bandwidth_rb)
+                else
+                    carrier.bandwidth_mhz =
+                        frequency.lte_bandwidth_mhz(carrier.bandwidth_rb, true)
+                end
             end
         end
 
