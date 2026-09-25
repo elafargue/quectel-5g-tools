@@ -233,6 +233,25 @@ end
 -- kept as the modem gives them -- a parser that renamed them would be harder
 -- to check against the manual -- and the display calls both Ec/No, which is
 -- the 3GPP term.
+-- 0x8000, the smallest 16-bit signed integer, which this modem sends for a
+-- field it has no value for. Seen in <rank> on a live Free/Orange 3G attach,
+-- on every neighbour of every line, while RSCP and Ec/No beside it were
+-- ordinary readings.
+--
+-- Guarded on the signal fields as well, though it has not been seen there:
+-- -32768 is not a value either can take -- RSCP runs to about -120 dBm and
+-- Ec/No to about -24 dB -- so treating it as absent is right whether or not
+-- the modem ever uses it that way. Left unguarded and scaled it becomes
+-- -3276.8 dBm, which stores as a reading and drags the whole panel's y-axis
+-- down to it, flattening every real value into a line.
+local UNAVAILABLE = -32768
+
+local function available(value)
+    local n = tonumber(value)
+    if not n or n == UNAVAILABLE then return nil end
+    return n
+end
+
 local function parse_wcdma_fields(values, o)
     return {
         mcc = tonumber(values[o]),
@@ -242,8 +261,8 @@ local function parse_wcdma_fields(values, o)
         uarfcn = tonumber(values[o + 4]),
         psc = tonumber(values[o + 5]),
         rac = tonumber(values[o + 6]),
-        rscp = tonumber(values[o + 7]),
-        ecio = tonumber(values[o + 8]),
+        rscp = available(values[o + 7]),
+        ecio = available(values[o + 8]),
         phych = tonumber(values[o + 9]),
         sf = tonumber(values[o + 10]),
         slot = tonumber(values[o + 11]),
@@ -429,7 +448,7 @@ end
 local WCDMA_NEIGHBOUR_SCALE = 10
 
 local function scaled(value)
-    local n = tonumber(value)
+    local n = available(value)
     if not n then return nil end
     return n / WCDMA_NEIGHBOUR_SCALE
 end

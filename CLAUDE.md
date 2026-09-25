@@ -306,6 +306,20 @@ The LTE-serving-cell variant is **still doc-derived** — no capture of a WCDMA
 neighbour seen from LTE has reached this repository, and the same tenths
 assumption is applied to it untested.
 
+A second capture days later, same UARFCN and one PSC in common, holds the
+tenths again: −780 and −860 reading as −78.0 and −86.0 dBm. Two captures apart
+in time is the strongest evidence available that the scaling is real rather
+than a coincidence of one reading.
+
+**−32768 means "no value".** That capture carried it in `<rank>` on every
+neighbour of every line — 0x8000, the smallest 16-bit signed integer, the
+usual sentinel on this silicon. `rank` is not recorded so it reaches nothing,
+but `available()` guards RSCP and Ec/No on both the serving and neighbour
+lines anyway: −32768 is not a value either can take, so treating it as absent
+is right whether or not the modem ever sends it there. Scaled and unguarded it
+becomes −3276.8 dBm, which stores as a measurement and drags a panel's whole
+y-axis down to it, flattening every real reading into a line.
+
 ### And an LTE neighbour seen from 3G is transposed
 
 The same trap in the other direction, found from the boat's dashboard: the

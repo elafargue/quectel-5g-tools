@@ -651,6 +651,46 @@ test("both neighbours are weaker than the serving cell",
 -- RSRP stays absent: it is a different quantity and nothing measured one.
 test("a WCDMA neighbour has no rsrp", wn[1].rsrp == nil)
 
+-- A second live neighbour capture from the same 3G attach, days later. Same
+-- UARFCN and one PSC in common (184), different levels -- and <rank> reading
+-- -32768 on every neighbour of every line.
+--
+-- 0x8000, the smallest 16-bit signed integer, is this modem saying it has no
+-- value for the field. We do not record rank, so it reaches nothing; the
+-- guard is on RSCP and Ec/No, where it has not been seen and could not be a
+-- reading if it were. Scaled it becomes -3276.8 dBm, which stores as a
+-- measurement and drags a panel's whole y-axis down to it.
+local SENTINEL = '+QENG: "neighbourcell","WCDMA",3000,-646,184,-780,-140,6,-32768,-\n' ..
+                 '+QENG: "neighbourcell","WCDMA",3000,-646,438,-860,-205,2,-32768,-\n\nOK'
+
+local sn = parser.parse_neighbours(SENTINEL, "WCDMA")
+test("both neighbours of the second capture parsed", #sn == 2)
+test("second capture psc 184 at -78.0 dBm",
+    sn[1].psc == 184 and sn[1].rscp == -78.0 and sn[1].ecno == -14.0)
+test("second capture psc 438 at -86.0 dBm",
+    sn[2].psc == 438 and sn[2].rscp == -86.0 and sn[2].ecno == -20.5)
+-- The tenths hold across two captures days apart, which is the strongest
+-- evidence available that the scaling is real and not a coincidence.
+test("the tenths scaling holds on a second capture",
+    sn[1].rscp > -120 and sn[1].rscp < -25
+        and sn[2].ecno > -24 and sn[2].ecno < 0)
+
+-- Were the sentinel ever to land in a signal field it must read as absent.
+local sent = parser.parse_neighbours(
+    '+QENG: "neighbourcell","WCDMA",3000,-646,184,-32768,-32768,6,-32768,-\n\nOK',
+    "WCDMA")[1]
+test("a sentinel RSCP is absent, not -3276.8", sent.rscp == nil)
+test("a sentinel Ec/No is absent, not -3276.8", sent.ecno == nil)
+test("the rest of the sentinel line still parses",
+    sent.uarfcn == 3000 and sent.psc == 184)
+
+-- Same guard on the serving line, which is not scaled but would record it raw.
+local sent_sv = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN","WCDMA",208,01,6319,1027934,3000,492,2,' ..
+    '-32768,-32768,-,-,-,-,-\n\nOK')
+test("a sentinel serving RSCP is absent", sent_sv.wcdma.rscp == nil)
+test("a sentinel serving Ec/No is absent", sent_sv.wcdma.ecio == nil)
+
 -- An LTE neighbour seen *from* the 3G cell. The manual gives this its own
 -- layout under "In WCDMA mode", and it is the LTE-mode one with RSRP and RSRQ
 -- transposed and no RSSI or SINR at all:
