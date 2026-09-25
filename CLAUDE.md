@@ -230,6 +230,28 @@ everything else, so an `NR5G` neighbour line would be read with LTE field
 offsets — the same trap WCDMA neighbours were in. Nothing has ever produced
 one to check against.
 
+### Fifth operator capture: AT&T US, LTE-only
+
+Test 26, and the first capture to find nothing wrong — worth recording as much
+as the others, since four of the five before it each exposed a bug.
+
+It closes the single-line `QENG` gap: that form is emitted only by an LTE
+attach with no NR leg, and one TIM fixture held the path alone. This is a
+second, from a different continent and different bands — **B2 and B66**,
+neither of which appears anywhere else here. Also a second three-digit MNC
+(310-410, after T-Mobile's 310-260) and **PCI 0 on a carrier**, where the KT
+capture had it only on a neighbour.
+
+Its two reads cross-check each other: the intra neighbour is the serving cell
+and the inter neighbour is the secondary carrier, same EARFCNs and same PCIs
+from `QENG` and `QCAINFO` independently. And the line ends in a `tx_power` of
+−140, which nothing here reads but which must not disturb the fields ahead of
+it.
+
+**AT&T shut its 3G network down in 2022**, so this SIM cannot produce a WCDMA
+neighbour seen from LTE. That layout stays doc-derived, and needs a European
+network with UMTS still running.
+
 ## SINR vs RSSNR
 
 **Important**: The `AT+QCAINFO` command reports a field that Quectel documentation calls `rssnr`, which is **NOT** the same as SINR from `AT+QENG="servingcell"`.

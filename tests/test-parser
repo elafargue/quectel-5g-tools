@@ -915,6 +915,89 @@ test("SA operator name is the MVNO", sa5op and sa5op.operator == "Google Fi")
 test("SA operator plmn is the host network", sa5op and sa5op.mcc_mnc == "310260")
 print("")
 
+-- Test 26: AT&T US (310/410), LTE-only with B2 + B66 aggregation
+--
+-- The single-line QENG form, which only an LTE attach with no NR leg emits.
+-- One TIM fixture held that path alone until this arrived; this is a second,
+-- from a different continent and different bands.
+--
+-- AT&T shut its 3G network down in 2022, so there are no WCDMA neighbours to
+-- be had here -- that layout stays doc-derived.
+print("Test 26: AT&T LTE-only, single-line QENG with B2 + B66")
+
+local att = parser.parse_serving_cell(
+    '+QENG: "servingcell","NOCONN","LTE","FDD",310,410,1D5E17C,228,800,2,5,5,' ..
+    '9F06,-62,-7,-35,25,15,-140,-\n\nOK')
+
+test("AT&T single-line parsed", att.lte ~= nil)
+test("AT&T has no NR leg", att.nr5g == nil)
+test("AT&T band 2", att.lte and att.lte.band == 2)
+test("AT&T earfcn 800", att.lte and att.lte.arfcn == 800)
+test("AT&T pci 228", att.lte and att.lte.pci == 228)
+test("AT&T tac 9F06", att.lte and att.lte.tac == "9F06")
+test("AT&T rsrp -62", att.lte and att.lte.rsrp == -62)
+test("AT&T rsrq -7", att.lte and att.lte.rsrq == -7)
+-- The line ends with a tx_power of -140, which nothing here reads. It must
+-- not disturb the fields ahead of it, which is what these pin.
+test("AT&T rssi -35", att.lte and att.lte.rssi == -35)
+test("AT&T sinr 25", att.lte and att.lte.sinr == 25)
+test("AT&T cell id yields eNodeB 120289",
+    utils.extract_enodeb(att.lte.cell_id) == 120289)
+
+local atts = { serving = att }
+utils.add_technology(atts)
+test("AT&T technology is LTE", att.technology == "LTE")
+-- 410 is the second three-digit MNC here, after T-Mobile's 260.
+test("AT&T plmn is 310-410", att.plmn == "310-410")
+
+-- B2 and B66, neither of which appears in any other fixture. B66's downlink
+-- shares 2110-2200 MHz with B4 and B10, so the EARFCN is what separates them
+-- -- LTE channel numbers partition by band where NR's overlap.
+test("B2 earfcn 800 is 1950.0 MHz",
+    select(1, frequency.earfcn_to_mhz(800)) == 1950.0)
+test("B66 earfcn 66986 is 2165.0 MHz",
+    select(1, frequency.earfcn_to_mhz(66986)) == 2165.0)
+test("B2 and B66 are identified from the EARFCN alone",
+    select(2, frequency.earfcn_to_mhz(800)) == 2
+        and select(2, frequency.earfcn_to_mhz(66986)) == 66)
+
+local attca = parser.parse_qcainfo(
+    '+QCAINFO: "PCC",800,100,"LTE BAND 2",1,228,-63,-7,-34,30\n' ..
+    '+QCAINFO: "SCC",66986,50,"LTE BAND 66",1,0,-69,-9,-51,27,0,-,-\n\nOK')
+
+test("AT&T PCC band 2", attca.pcc and attca.pcc.band == 2)
+test("AT&T one secondary carrier", #attca.scc == 1)
+test("AT&T SCC band 66", attca.scc[1].band == 66)
+-- PCI 0 on a *carrier*, where the KT capture had it on a neighbour. Zero is
+-- truthy in Lua, so a nil here would pass unnoticed in most code.
+test("AT&T SCC keeps PCI 0", attca.scc[1].pci == 0)
+test("AT&T SCC PCI 0 is a number", type(attca.scc[1].pci) == "number")
+test("AT&T SCC uplink not configured", attca.scc[1].ul_configured == 0)
+
+local attst = { serving = att, ca = attca }
+utils.add_frequency_info(attst)
+utils.backfill_from_serving(attst)
+-- QENG's DL index 5 and QCAINFO's 100 resource blocks must agree.
+test("AT&T bandwidth agrees across both encodings",
+    att.lte.bandwidth_dl_mhz == 20 and attca.pcc.bandwidth_mhz == 20)
+test("AT&T SCC is 50 RB, 10 MHz", attca.scc[1].bandwidth_mhz == 10)
+
+-- The neighbour list mirrors the carriers: the intra is the serving cell and
+-- the inter is the secondary, which makes the two reads cross-check.
+local attnb = parser.parse_neighbours(
+    '+QENG: "neighbourcell intra","LTE",800,228,-7,-63,-35,-,-,-,-,-,-\n' ..
+    '+QENG: "neighbourcell inter","LTE",66986,0,-9,-69,-51,-,-,-,-,-\n\nOK',
+    "LTE")
+test("AT&T two neighbours parsed", #attnb == 2)
+test("AT&T intra neighbour is the serving cell",
+    attnb[1].scope == "intra" and attnb[1].arfcn == 800
+        and attnb[1].pci == att.lte.pci)
+test("AT&T inter neighbour is the secondary carrier",
+    attnb[2].scope == "inter" and attnb[2].arfcn == 66986
+        and attnb[2].pci == attca.scc[1].pci)
+test("AT&T neighbour PCI 0 survives", attnb[2].pci == 0)
+print("")
+
 print("=== Results ===")
 print(string.format("Passed: %d, Failed: %d", passed, failed))
 
