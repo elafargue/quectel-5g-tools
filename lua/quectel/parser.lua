@@ -514,7 +514,7 @@ function M.parse_neighbours(text, serving_technology)
                 end
 
                 table.insert(neighbours, n)
-            elseif serving_technology == "WCDMA" then
+            elseif rat == "LTE" and serving_technology == "WCDMA" then
                 -- An LTE neighbour seen *from* a WCDMA serving cell, which
                 -- the manual gives its own layout in the "In WCDMA mode"
                 -- section -- and it is the LTE-mode one with RSRP and RSRQ
@@ -542,7 +542,7 @@ function M.parse_neighbours(text, serving_technology)
                     rsrq = tonumber(values[6]),
                     srxlev = tonumber(values[7]),
                 })
-            else
+            elseif rat == "LTE" then
                 table.insert(neighbours, {
                     scope = scope,
                     rat = rat:lower(),
@@ -551,6 +551,30 @@ function M.parse_neighbours(text, serving_technology)
                     rsrq = tonumber(values[5]),
                     rsrp = tonumber(values[6]),
                     rssi = tonumber(values[7]),
+                })
+            else
+                -- A radio with no layout here. This used to be the LTE
+                -- branch's job -- it caught everything that was not WCDMA --
+                -- so an "NR5G" neighbour would have been read with LTE field
+                -- offsets, which is the trap WCDMA neighbours were in and
+                -- LTE-from-3G ones after them. Two guesses in a row were
+                -- wrong; there is no reason to expect a third to be right.
+                --
+                -- Nothing is known to produce one. The manual documents an
+                -- "In LTE mode" and an "In WCDMA mode" neighbour layout and
+                -- nothing else, and a live 5G standalone attach returned a
+                -- bare OK on every attempt. So this is a guard, not support:
+                -- if a line ever does arrive, the channel number is recorded
+                -- and the signal fields are not invented.
+                --
+                -- `channel`, not `arfcn`: an NR-ARFCN is a different raster,
+                -- and naming it arfcn would invite add_frequency_info() to
+                -- read it against the E-UTRA table -- the same reason a
+                -- WCDMA neighbour's is called uarfcn.
+                table.insert(neighbours, {
+                    scope = scope,
+                    rat = rat:lower(),
+                    channel = tonumber(values[3]),
                 })
             end
         end

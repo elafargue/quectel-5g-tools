@@ -881,6 +881,31 @@ test("SA carrier frequency is 3950.4 MHz",
 test("a bare OK neighbour response is no neighbours",
     #parser.parse_neighbours("OK", "SA") == 0)
 
+-- A radio with no layout here. The LTE branch used to catch everything that
+-- was not WCDMA, so an NR5G neighbour line would have been read with LTE
+-- field offsets -- the trap WCDMA neighbours were in, and LTE-from-3G ones
+-- after them. Nothing is known to emit one: the manual documents no NR
+-- neighbour layout, and a live SA attach returned a bare OK every time it was
+-- asked. This is a guard, not support.
+local unknown = parser.parse_neighbours(
+    '+QENG: "neighbourcell","NR5G",663360,992,-10,-73,34\n' ..
+    '+QENG: "neighbourcell intra","LTE",1550,91,-9,-78,-47,-,-,-,-,-,-\n\nOK',
+    "SA")
+test("an unknown radio is still recorded", #unknown == 2)
+test("an unknown radio keeps its rat", unknown[1].rat == "nr5g")
+-- `channel`, not `arfcn`: an NR-ARFCN is a different raster, and the name
+-- would invite add_frequency_info() to read it against the E-UTRA table.
+test("an unknown radio's channel is not called arfcn",
+    unknown[1].channel == 663360 and unknown[1].arfcn == nil)
+-- No signal fields, because none were read -- only guessed at.
+test("an unknown radio invents no signal fields",
+    unknown[1].rsrp == nil and unknown[1].rsrq == nil
+        and unknown[1].rssi == nil)
+-- The LTE neighbour beside it is untouched.
+test("an LTE neighbour is unaffected by the guard",
+    unknown[2].arfcn == 1550 and unknown[2].rsrp == -78
+        and unknown[2].rsrq == -9 and unknown[2].scope == "intra")
+
 -- The operator name comes from the SIM and the PLMN from the network: Google
 -- Fi is an MVNO riding T-Mobile, so they differ without either being wrong --
 -- the same shape as Free on Orange, from a different direction.

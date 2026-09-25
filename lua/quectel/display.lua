@@ -294,7 +294,14 @@ function M.print_neighbours(status, max_rows)
             break
         end
 
-        if nb.rat == "wcdma" then
+        if nb.channel then
+            -- A radio the parser has no layout for: the channel number and
+            -- nothing else, because nothing else was read rather than
+            -- guessed. Printed rather than dropped so it is visible that the
+            -- modem reported something we cannot decode.
+            print(string.format("  %-3s channel %-10s | (no layout for this radio)",
+                nb.rat:upper(), nb.channel))
+        elseif nb.rat == "wcdma" then
             -- Its own row rather than the LTE one with blanks in it. A WCDMA
             -- neighbour has a UARFCN not an EARFCN, a PSC not a PCI, and RSCP
             -- not RSRP -- related quantities, not the same ones. Rendered
